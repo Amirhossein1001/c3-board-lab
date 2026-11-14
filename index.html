@@ -67,7 +67,7 @@ h1, h2, h3, h4, b, strong { color: var(--ink); }
 
 .stage-head { position: absolute; left: 16px; top: 16px; max-width: calc(100% - 300px); display: flex; flex-direction: column; gap: 2px; pointer-events: none; }
 .eyebrow { font-family: var(--f-display); font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--accent); font-weight: 600; }
-.stage-head h1 { margin: 0; font-family: var(--f-display); font-size: 26px; line-height: 1.1; font-weight: 700; text-wrap: balance; }
+.stage-head h1 { margin: 0; font-family: var(--f-display); font-size: 26px; line-height: 1.1; font-weight: 700; text-transform: uppercase; letter-spacing: .025em; text-wrap: balance; }
 .hint { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
 
 .callout { position: absolute; box-sizing: border-box; width: 196px; padding: 8px 12px 10px; background: var(--panel); border: 1px solid var(--line);
@@ -137,7 +137,7 @@ h1, h2, h3, h4, b, strong { color: var(--ink); }
 /* side panel */
 .side { grid-column: 3; grid-row: 1; display: grid; grid-template-rows: auto minmax(0, 5fr) minmax(0, 6fr); gap: 12px; min-width: 0; min-height: 0; }
 .brand { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 60px; padding: 0 16px; }
-.brand .name { font-family: var(--f-display); font-weight: 700; font-size: 19px; letter-spacing: .02em; line-height: 1; white-space: nowrap; }
+.brand .name { font-family: var(--f-display); font-weight: 700; font-size: 19px; letter-spacing: .025em; text-transform: uppercase; line-height: 1; white-space: nowrap; }
 .brand .name span { color: var(--accent); }
 .brand .sub { font-size: 11.5px; color: var(--muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .brand > div:first-child { min-width: 0; }
@@ -152,7 +152,7 @@ h1, h2, h3, h4, b, strong { color: var(--ink); }
 .tabs button:hover { color: var(--ink); }
 .tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--accent); }
 .tabpanel { flex: 1 1 0; padding: 16px; overflow: auto; min-height: 0; scrollbar-width: thin; }
-.tabpanel h2 { margin: 0 0 8px; font-family: var(--f-display); font-size: 17px; line-height: 1.25; font-weight: 700; text-wrap: balance; }
+.tabpanel h2 { margin: 0 0 8px; font-family: var(--f-display); font-size: 17px; line-height: 1.25; font-weight: 700; text-transform: uppercase; letter-spacing: .02em; text-wrap: balance; }
 .tabpanel p { margin: 0 0 8px; color: var(--muted); }
 .tabpanel p b, .tabpanel li b { color: var(--ink); }
 .tabpanel > :last-child { margin-bottom: 0; }
@@ -227,7 +227,7 @@ code { font-family: var(--f-mono); font-size: .92em; background: var(--panel-2);
 .drawer-back { position: fixed; inset: 0; background: rgba(15,34,57,.28); z-index: 20; }
 .drawer { position: fixed; top: 0; bottom: 0; left: 0; width: min(440px, 100%); z-index: 21; background: var(--panel); border-right: 1px solid var(--line);
   padding: max(16px, env(safe-area-inset-top, 0px)) 16px 16px max(16px, env(safe-area-inset-left, 0px)); overflow: auto; box-sizing: border-box; }
-.drawer h2 { font-family: var(--f-display); margin: 0 0 12px; font-size: 20px; }
+.drawer h2 { font-family: var(--f-display); margin: 0 0 12px; font-size: 20px; text-transform: uppercase; letter-spacing: .02em; }
 .fb { display: grid; gap: 14px; margin-top: 4px; }
 .fb label, .fb legend { display: block; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
 .fb fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
@@ -248,6 +248,7 @@ code { font-family: var(--f-mono); font-size: .92em; background: var(--panel-2);
 .drawer th { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
 .drawer .lesson-row { display: grid; grid-template-columns: 46px 1fr; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); margin-bottom: 8px; cursor: pointer; background: var(--panel-2); width: 100%; text-align: left; box-sizing: border-box; }
 .drawer .lesson-row:hover { border-color: var(--accent); }
+.drawer .lesson-row b { font-family: var(--f-display); font-weight: 700; text-transform: uppercase; letter-spacing: .03em; }
 .drawer p { color: var(--muted); }
 kbd { font-family: var(--f-mono); font-size: 11.5px; padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--panel-2); }
 
@@ -1279,7 +1280,7 @@ function openDrawer(kind) {
   $("nav-board").setAttribute("aria-pressed", "false");
   let html = "";
   if (kind === "feedback") html = feedbackHTML();
-  if (kind === "lessons") html = `<h2>Lessons</h2><p>Six short lessons that follow the Lab K handout. A dot turns teal once you've run the lesson and pressed Boot.</p>` +
+  if (kind === "lessons") html = `<h2>Lessons</h2><p>Six short lessons that follow the Lab K handout. A dot turns orange once you've run the lesson and pressed Boot.</p>` +
     LESSONS.map((L, i) => `<button class="lesson-row" data-i="${i}"><svg viewBox="0 0 46 34" width="46" height="34">${ICONS[i]}</svg><span><b>${i + 1}. ${L.title}</b><br><span style="color:var(--muted);font-size:12.5px">${L.short}</span></span></button>`).join("");
   if (kind === "regs") html = `<h2>GPIO register map</h2><p>The ESP32-C3's GPIO block starts at <code>0x6000_4000</code>. Addresses checked against ESP-IDF v5.5.6 <code>soc/gpio_reg.h</code>.</p>
     <table><thead><tr><th>Register</th><th>Address</th><th>Use</th></tr></thead><tbody>
