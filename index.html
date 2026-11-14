@@ -523,17 +523,22 @@ try { tried = new Set(JSON.parse(localStorage.getItem("c3lab.tried") || "[]")); 
 function saveTried() { try { localStorage.setItem("c3lab.tried", JSON.stringify([...tried])); } catch (e) {} }
 
 /* ---------- model dimensions (mm). Breadboard rows 1-30 run along z; the board's pins sit in rows 1-15, columns b and i ---------- */
-const PITCH = 2.54, HX = 11.43, TOP = 0.8, PCB = { W: 25.4, L: 48, T: 1.6 };
+/* the board follows Espressif's DXF (DIMENSION_ESP32-C3-DEVKITM-1_V1): 25.40 × 38.91 mm, r = 1 mm corners, the module's
+   antenna overhanging the top edge by 5.3 mm. Board origin = PCB centre; DXF (X, Y) maps to x = X − 12.7, z = 19.4565 − Y */
+const PITCH = 2.54, HX = 11.43, TOP = 0.8, PCB = { W: 25.4, L: 38.913, T: 1.6, R: 1.0 };
+const PIN1Z = -17.3935, pinZ = (i) => PIN1Z + i * PITCH;   // header pin i + 1 (pin 1 at the antenna end)
+const MOD = { W: 13.22, L: 16.59, Z0: -24.79, Z1: -8.2 }, MODZ = (MOD.Z0 + MOD.Z1) / 2, ANTZ = -19.41;   // ESP32-C3-MINI-1; antenna zone z < ANTZ
+const SPAN = { z0: MOD.Z0, z1: PCB.L / 2 }, SPANC = (SPAN.z0 + SPAN.z1) / 2, SPANL = SPAN.z1 - SPAN.z0;   // whole board incl. antenna
 const BB = { wid: 54.6, len: 82, h: 8.5 };
 const rowZ = (r) => (r - 15.5) * PITCH;
 const COLX = { a: -13.97, b: -11.43, c: -8.89, d: -6.35, e: -3.81, f: 3.81, g: 6.35, h: 8.89, i: 11.43, j: 13.97 };
 const RAILX = [-22.86, -20.32, 20.32, 22.86];            // + and − on each side; − is the inner column
 const railRow = (k) => 2 + k + Math.floor(k / 5);        // 25 holes in five groups of five
-const BOARD_Z = rowZ(8), Y_ALONE = 9.36, Y_BB = BB.h + 2.54 + TOP;
+const BOARD_Z = rowZ(1) - PIN1Z, Y_ALONE = 9.36, Y_BB = BB.h + 2.54 + TOP;
 /* callout anchors: b = board coordinates (origin at the PCB centre), w = bench coordinates */
 const ANCH = {
-  module: { b: [0, 3.4, -13.2] }, antenna: { b: [0, 1.75, -21.9] }, headers: { b: [-HX, 1.0, -12.7] }, usb: { b: [0, 2.5, 23.4] },
-  boot: { b: [-6.6, 3.1, 20.6] }, rgb: { b: [-3.4, 1.9, -3.2] }, io3: { b: [-HX, 1.0, -7.62] }, gnd: { b: [-HX, 1.0, -5.08] },
+  module: { b: [0, 3.4, -13.8] }, antenna: { b: [0, 1.75, -22.1] }, headers: { b: [-HX, 1.0, pinZ(2)] }, usb: { b: [0, 2.6, 18.6] },
+  boot: { b: [-7.6, 2.5, 16.28] }, rgb: { b: [6.73, 2.0, -2.62] }, io3: { b: [-HX, 1.0, pinZ(4)] }, gnd: { b: [-HX, 1.0, pinZ(5)] },
   led: { w: [COLX.d, BB.h + 13.2, rowZ(25.5)] }, bread: { w: [COLX.h, BB.h + 0.2, rowZ(25)] },
 };
 
@@ -646,7 +651,7 @@ function buildScene() {
   gridMesh.rotation.x = -Math.PI / 2; gridMesh.position.set(0, 0, -6); gridMesh.renderOrder = -3; scene.add(gridMesh); applyTheme();
   const bt = blobTex();
   const blob = (w, d, z) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshBasicMaterial({ map: bt, transparent: true, depthWrite: false, opacity: 0 })); m.rotation.x = -Math.PI / 2; m.position.set(0, 0.03, z); m.renderOrder = -2; scene.add(m); return m; };
-  blobBoard = blob(48, 76, BOARD_Z); blobBB = blob(BB.wid * 1.5, BB.len * 1.42, 0);
+  blobBoard = blob(46, SPANL + 26, BOARD_Z + SPANC); blobBB = blob(BB.wid * 1.5, BB.len * 1.42, 0);
   const floor = new THREE.Mesh(new THREE.PlaneGeometry(700, 700), new THREE.ShadowMaterial({ opacity: 0.2 }));
   floor.rotation.x = -Math.PI / 2; floor.position.y = 0.05; floor.receiveShadow = true; floor.renderOrder = -1; scene.add(floor);
 
@@ -674,133 +679,146 @@ function buildBoard() {
   const plastic = M(0x15171a, 0.75, 0, { envMapIntensity: 0.4 }), ic = M(0x1d2125, 0.75, 0, { envMapIntensity: 0.4 }), lineLt = 0x56616b;
 
   // PCB: rounded corners, bevelled edge
-  const outline = rrect(W - 0.3, L - 0.3, 1.5);
+  const outline = rrect(W - 0.3, L - 0.3, PCB.R - 0.15);
   const pcbGeo = new THREE.ExtrudeGeometry(outline, { depth: T - 0.3, bevelEnabled: true, bevelThickness: 0.15, bevelSize: 0.15, bevelSegments: 1, curveSegments: 8 });
   pcbGeo.rotateX(-Math.PI / 2); pcbGeo.translate(0, -(T - 0.3) / 2, 0);
   mesh(pcbGeo, mask, 0, 0, 0, board);
-  const rimPts = rrect(W, L, 1.6).getPoints(8), rimPos = [];
+  const rimPts = rrect(W, L, PCB.R).getPoints(8), rimPos = [];
   rimPts.forEach((p, i) => { const q = rimPts[(i + 1) % rimPts.length]; rimPos.push(p.x, TOP + 0.01, -p.y, q.x, TOP + 0.01, -q.y); });
   board.add(inkLine(rimPos, lineLt, 0.95));
 
+  // part positions from the DXF (board coordinates, mm)
+  const U3X = -2.24, U3Z = 6.33, LDOX = -0.91, LDOZ = -1.04, RGBX = 6.73, RGBZ = -2.62, BTNX = 7.6, BTNZ = 16.28, LEDX = -4.47, LEDZ = 10.82;
+
   // copper and silkscreen, drawn at 32 px per mm
-  const px = 32, cw = Math.round(W * px), ch = L * px, u = (x) => (x + W / 2) * px, v = (z) => (z + L / 2) * px;
-  const MODZ = -15.4, BTNZ = 20.6, BTNX = 6.6;
+  const px = 32, cw = Math.round(W * px), ch = Math.round(L * px), u = (x) => (x + W / 2) * px, v = (z) => (z + L / 2) * px;
   const silk = canvasTex(cw, ch, (g) => {
     g.lineCap = "round"; g.lineJoin = "round";
     g.strokeStyle = "rgba(150,172,186,.12)"; g.fillStyle = "rgba(150,172,186,.2)"; g.lineWidth = 5;          // a hint of traces under the mask
-    [-1, 1].forEach((sd) => { for (let i = 0; i < 15; i++) { const z = (i - 7) * PITCH, x1 = sd * (6.9 - (i % 3) * 0.7);
-      g.beginPath(); g.moveTo(u(sd * (HX - 1)), v(z)); g.lineTo(u(x1), v(z)); g.lineTo(u(x1 - sd * 1.3), v(z - 1.3)); g.stroke(); g.beginPath(); g.arc(u(x1 - sd * 1.3), v(z - 1.3), 5, 0, 7); g.fill(); } });
-    g.fillStyle = "#c9a24a";                                                                                    // module's castellated pads
-    for (let z = -18.4; z < -7.4; z += 0.8) { g.fillRect(u(-7.15), v(z), 22, 14); g.fillRect(u(7.15) - 22, v(z), 22, 14); }
-    for (let x = -5.6; x < 5.7; x += 0.8) g.fillRect(u(x) - 7, v(-7.1) - 6, 14, 22);
-    [-1, 1].forEach((sd) => { for (let i = 0; i < 15; i++) { const z = (i - 7) * PITCH;                         // through-hole pads
-      g.fillStyle = "#d8ab4a"; g.beginPath(); if (i === 0) g.rect(u(sd * HX) - 30, v(z) - 30, 60, 60); else g.arc(u(sd * HX), v(z), 30, 0, 7); g.fill();
-      g.fillStyle = "#3a2c10"; g.beginPath(); g.arc(u(sd * HX), v(z), 15, 0, 7); g.fill(); } });
-    g.strokeStyle = "rgba(236,240,242,.8)"; g.fillStyle = "rgba(240,243,245,.95)"; g.lineWidth = 3;             // white silkscreen
-    g.font = "600 25px 'IBM Plex Mono', Consolas, monospace"; g.textBaseline = "middle";
-    for (let i = 0; i < 15; i++) { const z = (i - 7) * PITCH;
-      g.textAlign = "left"; g.fillText(J1[i], u(-9.95), v(z)); g.textAlign = "right"; g.fillText(J3[i], u(9.95), v(z)); }
-    g.textAlign = "center"; g.font = "600 24px 'IBM Plex Mono', Consolas, monospace";
-    g.fillText("J1", u(-HX), v(-20.5)); g.fillText("J3", u(HX), v(-20.5));
-    g.font = "600 21px 'IBM Plex Mono', Consolas, monospace"; g.fillText("BOOT", u(-BTNX), v(23.25)); g.fillText("RST", u(BTNX), v(23.25));
-    g.font = "600 23px 'IBM Plex Sans', system-ui, sans-serif"; g.fillText("ESP32-C3-DevKitM-1", u(0), v(15.0));
-    g.font = "500 18px 'IBM Plex Mono', monospace"; g.fillText("RGB", u(-3.4), v(-1.2)); g.fillText("5V", u(5.4), v(13.9));
-    g.strokeRect(u(-BTNX - 2.2), v(BTNZ - 2.2), 4.4 * px, 4.4 * px); g.strokeRect(u(BTNX - 2.2), v(BTNZ - 2.2), 4.4 * px, 4.4 * px);
-    g.strokeRect(u(-4.5), v(5.7), 5.8 * px, 5.8 * px); g.strokeRect(u(-0.2), v(-3.2), 7.2 * px, 7.9 * px);
-    g.beginPath(); g.arc(u(-4.9), v(5.3), 5, 0, 7); g.fill();
+    [-1, 1].forEach((sd) => { for (let i = 0; i < 15; i++) { const z = pinZ(i), x1 = sd * (7.6 - (i % 3) * 0.6);
+      g.beginPath(); g.moveTo(u(sd * (HX - 1)), v(z)); g.lineTo(u(x1), v(z)); g.lineTo(u(x1 - sd * 1.1), v(z - 1.1)); g.stroke(); g.beginPath(); g.arc(u(x1 - sd * 1.1), v(z - 1.1), 5, 0, 7); g.fill(); } });
+    g.fillStyle = "#c9a24a";                                                                                    // the module's castellated pads
+    for (let z = ANTZ + 0.8; z < MOD.Z1 - 0.3; z += 0.8) { g.fillRect(u(-MOD.W / 2) - 8, v(z) - 7, 22, 14); g.fillRect(u(MOD.W / 2) - 14, v(z) - 7, 22, 14); }
+    for (let x = -5.6; x < 5.7; x += 0.8) g.fillRect(u(x) - 7, v(MOD.Z1) - 14, 14, 22);
+    [-1, 1].forEach((sd) => { for (let i = 0; i < 15; i++) { const x = u(sd * HX), z = v(pinZ(i));               // obround through-hole pads, 1.91 × 1.27
+      g.fillStyle = "#d8ab4a"; g.beginPath(); g.arc(x - 10.2, z, 20.3, Math.PI / 2, Math.PI * 1.5); g.arc(x + 10.2, z, 20.3, -Math.PI / 2, Math.PI / 2); g.closePath(); g.fill();
+      g.fillStyle = "#3a2c10"; g.beginPath(); g.arc(x, z, 15, 0, 7); g.fill(); } });
+    g.fillStyle = "#d8ab4a"; g.beginPath(); g.arc(u(0.46), v(3.72), 9, 0, 7); g.fill();                        // test pad
     g.fillStyle = "#c9ced2";                                                                                    // QFN lands around the bridge chip
-    for (let k = 0; k < 7; k++) { const o = -1.8 + k * 0.6; g.fillRect(u(-1.6 + o) - 4, v(8.6 - 2.85), 8, 12); g.fillRect(u(-1.6 + o) - 4, v(8.6 + 2.5), 8, 12); g.fillRect(u(-1.6 - 2.85), v(8.6 + o) - 4, 12, 8); g.fillRect(u(-1.6 + 2.5), v(8.6 + o) - 4, 12, 8); }
+    for (let k = 0; k < 5; k++) { const o = (k - 2) * 0.5;
+      g.fillRect(u(U3X + o) - 4, v(U3Z - 1.75) - 6, 8, 12); g.fillRect(u(U3X + o) - 4, v(U3Z + 1.75) - 6, 8, 12);
+      g.fillRect(u(U3X - 1.75) - 6, v(U3Z + o) - 4, 12, 8); g.fillRect(u(U3X + 1.75) - 6, v(U3Z + o) - 4, 12, 8); }
+    // white silkscreen, as on the board: pin names read toward the antenna, plus RGB@IO8, Boot and RST
+    g.fillStyle = "rgba(240,243,245,.95)"; g.textBaseline = "middle"; g.textAlign = "center"; g.font = "600 34px 'IBM Plex Sans', system-ui, sans-serif";
+    const vtext = (s, x, z) => { g.save(); g.translate(u(x), v(z)); g.rotate(-Math.PI / 2); g.scale(0.8, 1); g.fillText(s, 0, 0); g.restore(); };
+    for (let i = 0; i < 15; i++) { vtext(J1[i].replace("IO", ""), -10.0, pinZ(i)); vtext(J3[i].replace("IO", ""), 9.74, pinZ(i)); }
+    const htext = (s, x, zBase, size) => { g.save(); g.translate(u(x), v(zBase)); g.scale(0.82, 1); g.textAlign = "left"; g.textBaseline = "alphabetic";
+      g.font = `600 ${size}px 'IBM Plex Sans', system-ui, sans-serif`; g.fillText(s, 0, 0); g.restore(); };
+    htext("RGB@IO8", 4.44, 2.54, 38); htext("Boot", -8.95, 13.11, 40); htext("RST", 6.48, 13.11, 41);
   });
   decal(W, L, new THREE.MeshStandardMaterial({ map: silk, transparent: true, roughness: 0.6, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), 0, TOP + 0.012, 0, board);
 
-  // ESP32-C3-MINI-1: its own small PCB, meandering antenna at the board's end, brushed shield
+  // ESP32-C3-MINI-1 (13.2 × 16.6 mm): its own small PCB, meandering antenna hanging past the board's edge, brushed shield
   const modGrp = new THREE.Group(); board.add(modGrp);
-  edges(box(13.2, 0.8, 16.6, M(0x12171b, 0.9, 0, { envMapIntensity: 0.3 }), 0, TOP + 0.4, MODZ, modGrp), lineLt, 0.8);
-  const modTop = canvasTex(422, 531, (g, w, h) => {
-    g.fillStyle = "#151b1f"; g.fillRect(0, 0, w, h); g.fillStyle = "#0d1215"; g.fillRect(0, 0, w, 144);
+  edges(box(MOD.W, 0.8, MOD.L, M(0x12171b, 0.9, 0, { envMapIntensity: 0.3 }), 0, TOP + 0.4, MODZ, modGrp), lineLt, 0.8);
+  const antPx = Math.round((ANTZ - MOD.Z0) * 32);
+  const modTop = canvasTex(Math.round(MOD.W * 32), Math.round(MOD.L * 32), (g, w, h) => {
+    g.fillStyle = "#151b1f"; g.fillRect(0, 0, w, h); g.fillStyle = "#0d1215"; g.fillRect(0, 0, w, antPx);
     g.strokeStyle = "#d2a94e"; g.lineWidth = 13; g.lineJoin = "miter"; g.lineCap = "butt"; const p = (x, z) => [x * 32, z * 32];
-    g.beginPath(); g.moveTo(...p(0.6, 4.5)); g.lineTo(...p(0.6, 0.8)); g.lineTo(...p(1.6, 0.8)); g.moveTo(...p(1.6, 4.5)); g.lineTo(...p(1.6, 0.8));
-    for (let x = 1.6; x < 11.6; x += 2.2) { g.lineTo(...p(x + 1.1, 0.8)); g.lineTo(...p(x + 1.1, 3.3)); g.lineTo(...p(x + 2.2, 3.3)); g.lineTo(...p(x + 2.2, 0.8)); }
+    g.beginPath(); g.moveTo(...p(0.6, 5.3)); g.lineTo(...p(0.6, 0.9)); g.lineTo(...p(1.6, 0.9)); g.moveTo(...p(1.6, 5.3)); g.lineTo(...p(1.6, 0.9));
+    for (let x = 1.6; x < 11.6; x += 2.2) { g.lineTo(...p(x + 1.1, 0.9)); g.lineTo(...p(x + 1.1, 4.0)); g.lineTo(...p(x + 2.2, 4.0)); g.lineTo(...p(x + 2.2, 0.9)); }
     g.stroke();
-    g.fillStyle = "rgba(236,240,242,.5)"; g.fillRect(0, 144, w, 2);
+    g.fillStyle = "rgba(236,240,242,.5)"; g.fillRect(0, antPx, w, 2);
   });
-  decal(13.2, 16.6, new THREE.MeshStandardMaterial({ map: modTop, roughness: 0.85, envMapIntensity: 0.4 }), 0, TOP + 0.812, MODZ, modGrp);
-  const shield = edges(box(12.0, 1.7, 11.4, steel, 0, TOP + 0.8 + 0.85, MODZ + 2.3, modGrp), 0x5c666e, 0.7);
-  const shTex = brushed(384, 365, "#dbe0e3", "#bcc3c8", (g, w, h) => {
+  decal(MOD.W, MOD.L, new THREE.MeshStandardMaterial({ map: modTop, roughness: 0.85, envMapIntensity: 0.4 }), 0, TOP + 0.812, MODZ, modGrp);
+  const SHW = 12.4, SHL = 10.6, SHZ = (ANTZ + MOD.Z1) / 2;
+  const shield = edges(box(SHW, 1.6, SHL, steel, 0, TOP + 0.8 + 0.8, SHZ, modGrp), 0x5c666e, 0.7);
+  const shTex = brushed(397, 339, "#dbe0e3", "#bcc3c8", (g, w, h) => {
     g.strokeStyle = "rgba(40,50,58,.35)"; g.lineWidth = 2; g.strokeRect(10, 10, w - 20, h - 20);
-    g.textAlign = "center"; g.textBaseline = "middle"; g.font = "600 33px 'IBM Plex Mono', Consolas, monospace"; engrave(g, "ESP32-C3-MINI-1", w / 2, 132);
-    g.font = "500 22px 'IBM Plex Mono', Consolas, monospace"; engrave(g, "RISC-V · 160 MHz", w / 2, 184); engrave(g, "Wi-Fi · BLE 5", w / 2, 218);
+    g.textAlign = "center"; g.textBaseline = "middle"; g.font = "600 33px 'IBM Plex Mono', Consolas, monospace"; engrave(g, "ESP32-C3-MINI-1", w / 2, h * 0.36);
+    g.font = "500 22px 'IBM Plex Mono', Consolas, monospace"; engrave(g, "RISC-V · 160 MHz", w / 2, h * 0.52); engrave(g, "Wi-Fi · BLE 5", w / 2, h * 0.62);
     g.fillStyle = "rgba(36,46,54,.55)"; g.beginPath(); g.arc(34, h - 34, 8, 0, 7); g.fill();
   });
-  decal(12.0, 11.4, new THREE.MeshStandardMaterial({ map: shTex, roughness: 0.34, metalness: 0.7 }), 0, TOP + 2.51, MODZ + 2.3, modGrp);
+  decal(SHW, SHL, new THREE.MeshStandardMaterial({ map: shTex, roughness: 0.34, metalness: 0.7 }), 0, TOP + 2.41, SHZ, modGrp);
   shield.userData = { kind: "part", key: "module", name: "ESP32-C3-MINI-1 module", text: "The RISC-V chip, flash and RF parts, under a metal shield." }; picks.push(shield);
 
-  // Micro-USB: folded steel shell with an opening, tongue inside
-  const usbZ = 19.3, shell = new THREE.Shape(rrect(7.5, 2.6, 0.55).getPoints(6)); shell.holes.push(new THREE.Path(rrect(6.7, 1.8, 0.4).getPoints(6)));
+  // Micro-USB (J2): folded steel shell with an opening at the board's bottom edge, tongue inside
+  const usbZ = 13.0, shell = new THREE.Shape(rrect(7.5, 2.6, 0.55).getPoints(6)); shell.holes.push(new THREE.Path(rrect(6.7, 1.8, 0.4).getPoints(6)));
   const usb = edges(mesh(new THREE.ExtrudeGeometry(shell, { depth: 5.6, bevelEnabled: false }), steel, 0, TOP + 1.3, usbZ, board), 0x5c666e, 0.75);
   const lip = new THREE.Shape(rrect(8.0, 3.0, 0.7).getPoints(6)); lip.holes.push(new THREE.Path(rrect(6.9, 2.0, 0.45).getPoints(6)));
   mesh(new THREE.ExtrudeGeometry(lip, { depth: 0.3, bevelEnabled: false }), steel, 0, TOP + 1.3, usbZ + 5.5, board);
   box(6.7, 1.8, 0.3, M(0x0c0e10, 0.8), 0, TOP + 1.3, usbZ + 0.4, board); box(5.2, 0.55, 4.2, M(0x101316, 0.7), 0, TOP + 1.1, usbZ + 2.7, board);
   box(4.4, 0.06, 3.0, gold, 0, TOP + 1.4, usbZ + 3.2, board);
-  [-1, 1].forEach((s) => { box(0.5, 1.3, 1.5, steelDk, s * 3.95, TOP + 0.65, usbZ + 1.2, board); box(0.5, 1.3, 1.5, steelDk, s * 3.95, TOP + 0.65, usbZ + 4.2, board); });
+  [-1, 1].forEach((s) => { box(1.0, 0.3, 0.8, steelDk, s * 3.57, TOP + 0.15, 17.31, board); box(1.0, 0.3, 0.8, steelDk, s * 3.57, TOP + 0.15, 13.62, board);
+    box(0.3, 1.1, 0.8, steelDk, s * 3.9, TOP + 0.55, 17.31, board); box(0.3, 1.1, 0.8, steelDk, s * 3.9, TOP + 0.55, 13.62, board); });
   usb.userData = { kind: "part", key: "usb", name: "Micro-USB", text: "Power, flashing and the serial monitor." }; picks.push(usb);
 
-  // CP2102N USB-UART bridge (QFN, pin-1 dot)
-  const cp = edges(box(5, 0.85, 5, ic, -1.6, TOP + 0.425, 8.6, board), lineLt, 0.8);
+  // CP2102N USB-UART bridge (U3, 3 × 3 mm QFN, pin-1 dot)
+  const cp = edges(box(3.0, 0.85, 3.0, ic, U3X, TOP + 0.425, U3Z), lineLt, 0.8); board.add(cp);
   cp.userData = { kind: "part", key: "uart", name: "CP2102N", text: "USB-to-UART bridge: carries flashing and printf. It also toggles EN and IO9 to reset the chip." }; picks.push(cp);
-  const cpTex = canvasTex(160, 160, (g, w) => { g.fillStyle = "#1f2327"; g.fillRect(0, 0, w, w); g.fillStyle = "rgba(190,198,204,.75)"; g.beginPath(); g.arc(24, 24, 8, 0, 7); g.fill();
-    g.textAlign = "center"; g.font = "600 21px 'IBM Plex Mono', Consolas, monospace"; g.fillStyle = "rgba(190,198,204,.55)"; g.fillText("CP2102N", w / 2, 78); g.font = "500 16px 'IBM Plex Mono', monospace"; g.fillText("USB-UART", w / 2, 104); });
-  decal(5, 5, new THREE.MeshStandardMaterial({ map: cpTex, roughness: 0.75, envMapIntensity: 0.4 }), -1.6, TOP + 0.86, 8.6, board);
+  const cpTex = canvasTex(160, 160, (g, w) => { g.fillStyle = "#1f2327"; g.fillRect(0, 0, w, w); g.fillStyle = "rgba(190,198,204,.75)"; g.beginPath(); g.arc(24, 24, 9, 0, 7); g.fill();
+    g.textAlign = "center"; g.font = "600 25px 'IBM Plex Mono', Consolas, monospace"; g.fillStyle = "rgba(190,198,204,.55)"; g.fillText("CP2102N", w / 2, 84); g.font = "500 19px 'IBM Plex Mono', monospace"; g.fillText("USB-UART", w / 2, 112); });
+  decal(3.0, 3.0, new THREE.MeshStandardMaterial({ map: cpTex, roughness: 0.75, envMapIntensity: 0.4 }), U3X, TOP + 0.86, U3Z, board);
 
-  // 3.3 V regulator (SOT-223: three leads and a tab)
-  const ldo = edges(box(6.5, 1.6, 3.5, ic, 3.4, TOP + 0.8, 0.8, board), lineLt, 0.8);
+  // 3.3 V regulator (U2, SOT-223): three leads toward J1, the wide tab toward J3
+  const ldo = edges(box(3.5, 1.6, 6.5, ic, LDOX, TOP + 0.8, LDOZ, board), lineLt, 0.8);
   ldo.userData = { kind: "part", key: "ldo", name: "3.3 V regulator", text: "Turns USB's 5 V into the 3.3 V the chip runs on." }; picks.push(ldo);
-  box(3.0, 0.3, 1.9, steel, 3.4, TOP + 0.15, -1.7, board); box(3.0, 0.9, 0.3, steel, 3.4, TOP + 0.5, -1.0, board);
-  [-2.3, 0, 2.3].forEach((dx) => { box(0.75, 0.3, 1.8, steel, 3.4 + dx, TOP + 0.15, 3.3, board); box(0.75, 0.9, 0.3, steel, 3.4 + dx, TOP + 0.5, 2.6, board); });
+  box(1.9, 0.3, 3.0, steel, 1.86, TOP + 0.15, LDOZ, board); box(0.3, 0.9, 3.0, steel, LDOX + 1.85, TOP + 0.5, LDOZ, board);
+  [-2.3, 0, 2.3].forEach((dz) => { box(1.6, 0.3, 0.75, steel, -3.5, TOP + 0.15, LDOZ + dz, board); box(0.3, 0.9, 0.75, steel, LDOX - 1.85, TOP + 0.5, LDOZ + dz, board); });
 
-  // RGB LED (white 2 × 2 mm body, clear lens)
-  const rgb = edges(box(2.1, 0.9, 2.1, M(0xf3f4f2, 0.35), -3.4, TOP + 0.45, -3.2, board), 0x7d868d, 0.7);
-  cyl(0.72, 0.08, M(0xe9e2c4, 0.15, 0.1), -3.4, TOP + 0.92, -3.2, board, 20);
+  // RGB LED (D6, addressable, on GPIO8): white body, clear round lens, four leads
+  const rgb = edges(box(3.4, 1.1, 2.8, M(0xf3f4f2, 0.35), RGBX, TOP + 0.55, RGBZ, board), 0x7d868d, 0.7);
+  cyl(1.05, 0.08, M(0xe9e2c4, 0.15, 0.1), RGBX, TOP + 1.12, RGBZ, board, 24);
+  [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([a, b]) => box(0.5, 0.35, 0.9, steel, RGBX + a * 1.85, TOP + 0.18, RGBZ + b * 0.9, board));
   rgb.userData = { kind: "part", key: "rgb", name: "RGB LED (GPIO8)", text: "An addressable LED driven by GPIO8. Not used in Lab K." }; picks.push(rgb);
 
-  // 5 V power LED: small, red, lit
-  const pwr = box(1.0, 0.5, 0.75, M(0xff4a3a, 0.3, 0, { emissive: 0xff2010, emissiveIntensity: 1.6 }), 5.4, TOP + 0.25, 12.5, board);
-  box(0.3, 0.52, 0.8, steel, 4.75, TOP + 0.25, 12.5, board); box(0.3, 0.52, 0.8, steel, 6.05, TOP + 0.25, 12.5, board);
+  // 5 V power LED (D1, 0603): small, red, lit
+  const pwr = box(1.0, 0.5, 0.8, M(0xff4a3a, 0.3, 0, { emissive: 0xff2010, emissiveIntensity: 1.6 }), LEDX, TOP + 0.25, LEDZ, board);
+  box(0.3, 0.52, 0.85, steel, LEDX - 0.65, TOP + 0.25, LEDZ, board); box(0.3, 0.52, 0.85, steel, LEDX + 0.65, TOP + 0.25, LEDZ, board);
   pwr.userData = { kind: "part", key: "pwr", name: "5 V power LED", text: "On whenever USB power is connected." }; picks.push(pwr);
-  pwrHalo = glowSprite("255,70,48", 5.5, board, 5.4, TOP + 0.9, 12.5); pwrHalo.material.opacity = 0.85;
+  pwrHalo = glowSprite("255,70,48", 5.5, board, LEDX, TOP + 0.9, LEDZ); pwrHalo.material.opacity = 0.85;
 
-  // two SOT-23 transistors (auto-reset) and scattered 0402 / 0603 passives
-  [[4.6, 6.6], [4.6, 9.6]].forEach(([x, z]) => { edges(box(2.9, 1.0, 1.3, ic, x, TOP + 0.5, z, board), lineLt, 0.7);
-    box(0.4, 0.2, 0.6, steel, x - 0.95, TOP + 0.1, z + 0.9, board); box(0.4, 0.2, 0.6, steel, x + 0.95, TOP + 0.1, z + 0.9, board); box(0.4, 0.2, 0.6, steel, x, TOP + 0.1, z - 0.9, board); });
+  // D5 (SOD diode with a cathode band), two SOT-23 transistors for auto-reset, then the 0402 / 0603 parts
+  box(1.3, 0.9, 2.0, ic, -8.18, TOP + 0.45, 10.21, board); box(1.32, 0.92, 0.3, M(0x9aa2a8, 0.5), -8.18, TOP + 0.46, 9.55, board);
+  box(0.7, 0.3, 0.6, steel, -8.18, TOP + 0.15, 8.95, board); box(0.7, 0.3, 0.6, steel, -8.18, TOP + 0.15, 11.47, board);
+  [5.85, 9.76].forEach((z) => { const x = 7.52; edges(box(2.9, 1.0, 1.3, ic, x, TOP + 0.5, z, board), lineLt, 0.7);
+    box(0.4, 0.2, 0.6, steel, x - 0.95, TOP + 0.1, z - 0.95, board); box(0.4, 0.2, 0.6, steel, x + 0.95, TOP + 0.1, z - 0.95, board); box(0.4, 0.2, 0.6, steel, x, TOP + 0.1, z + 0.95, board); });
   const TAN = 0xb08a5c, BLK = 0x2b2f34, H = Math.PI / 2;
-  const pas = [[-1.5, -5.6, 0, 1, TAN], [0.5, -5.6, 0, 1, TAN], [2.5, -5.6, 0, 1, TAN], [5.4, -5.0, H, 1, BLK], [-6.0, -3.2, H, 1, TAN], [-5.8, -0.4, H, 1.6, BLK], [-0.9, 0.3, H, 1.6, TAN], [7.3, 0.8, H, 1, TAN],
-    [-5.6, 2.2, H, 1, BLK], [-3.6, 2.2, H, 1, TAN], [-1.8, 3.6, 0, 1, TAN], [-5.6, 4.4, H, 1, BLK], [-5.6, 7.4, H, 1, TAN], [-5.6, 9.6, H, 1, TAN], [2.0, 6.6, 0, 1, BLK], [2.0, 8.2, 0, 1, TAN], [2.0, 9.8, 0, 1, BLK],
-    [-2.6, 12.5, 0, 1, TAN], [-0.6, 12.5, 0, 1, BLK], [3.2, 12.5, 0, 1, BLK], [-2.4, 17.4, 0, 1.6, BLK], [2.4, 17.4, 0, 1.6, BLK], [0, 17.4, 0, 1, TAN], [-6.6, 17.3, 0, 1, TAN], [6.6, 17.3, 0, 1, BLK], [6.4, 15.0, H, 1, TAN], [-6.4, 14.4, H, 1, BLK]];
+  const C6 = (x, z) => [x, z, 0, 1.6, 0.8, TAN], Cz = (x, z) => [x, z, 1, 1.0, 0.5, TAN], Rz = (x, z) => [x, z, 1, 1.0, 0.5, BLK], Cx = (x, z) => [x, z, 0, 1.0, 0.5, TAN], Rx = (x, z) => [x, z, 0, 1.0, 0.5, BLK];
+  const pas = [C6(-7.51, -3.6), C6(-7.51, -2.08), C6(-7.51, 1.48), C6(-7.49, 4.35),
+    Cz(-8.56, -0.31), Cz(-7.64, -0.31), Cz(-6.47, -0.31), Cz(-6.47, 6.5), Rz(-6.91, 10.67), Cz(-5.23, 15.14), Cz(5.18, 15.14),
+    Rz(5.08, 4.85), Rz(1.96, 4.93), Rz(2.87, 4.93), Rz(5.08, 7.34), Cz(4.02, 8.84), Cz(4.02, 10.77),
+    Rz(1.96, 8.84), Rz(2.98, 8.84), Rz(1.96, 10.77), Rz(2.98, 10.77),
+    Rx(5.52, -0.15), Rx(7.95, -0.15), Rx(5.52, 0.76), Cx(7.95, 0.76), Rx(-7.92, 5.99), Rx(-7.92, 7.01), Rx(-7.97, 8.28), Rx(-6.4, 9.17),
+    [-1.9, 10.8, 1, 1.0, 0.6, BLK], [-0.86, 10.8, 1, 1.0, 0.6, BLK], [0.18, 10.8, 1, 1.0, 0.6, BLK]];
   const unit = new THREE.BoxGeometry(1, 1, 1), bodies = new THREE.InstancedMesh(unit, M(0xffffff, 0.7), pas.length), terms = new THREE.InstancedMesh(unit, M(0xcfd4d8, 0.35, 0.7), pas.length * 2);
   const d = new THREE.Object3D(), col = new THREE.Color();
-  pas.forEach(([x, z, rot, len, c], i) => { const wd = len * 0.5, h = len > 1 ? 0.6 : 0.45;
-    d.position.set(x, TOP + h / 2, z); d.rotation.set(0, rot, 0); d.scale.set(len * 0.58, h, wd); d.updateMatrix(); bodies.setMatrixAt(i, d.matrix); bodies.setColorAt(i, col.set(c));
-    [-1, 1].forEach((s, k) => { const o = s * len * 0.39; d.position.set(x + Math.cos(rot) * o, TOP + h / 2, z - Math.sin(rot) * o); d.scale.set(len * 0.22, h * 1.06, wd * 1.06); d.updateMatrix(); terms.setMatrixAt(i * 2 + k, d.matrix); }); });
+  pas.forEach(([x, z, alongZ, len, wd, c], i) => { const h = len > 1.2 ? 0.45 : 0.35;
+    d.position.set(x, TOP + h / 2, z); d.rotation.set(0, alongZ ? H : 0, 0); d.scale.set(len * 0.62, h, wd); d.updateMatrix(); bodies.setMatrixAt(i, d.matrix); bodies.setColorAt(i, col.set(c));
+    [-1, 1].forEach((s, k) => { const o = s * len * 0.4; d.position.set(x + (alongZ ? 0 : o), TOP + h / 2, z + (alongZ ? o : 0)); d.scale.set(len * 0.2, h * 1.06, wd * 1.06); d.updateMatrix(); terms.setMatrixAt(i * 2 + k, d.matrix); }); });
   bodies.castShadow = terms.castShadow = true; board.add(bodies, terms);
 
-  // tactile buttons: square base, steel plate, round cap
+  // SW1 (Boot) and SW2 (RST): small SMD tactile switches, 2.3 × 3.1 mm, steel frame, black actuator
   [[-BTNX, "boot"], [BTNX, "rst"]].forEach(([x, key]) => {
-    edges(box(3.6, 1.2, 3.6, M(0x30353b, 0.6), x, TOP + 0.6, BTNZ, board), lineLt, 0.7);
-    edges(box(3.6, 0.25, 3.6, steel, x, TOP + 1.325, BTNZ, board), 0x5c666e, 0.7);
-    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([a, b]) => box(0.5, 0.3, 0.7, steel, x + a * 2.0, TOP + 0.15, BTNZ + b * 1.2, board));
-    const cap = edges(cyl(1.05, 0.9, M(0x121519, 0.45, 0, { envMapIntensity: 0.6 }), x, TOP + 1.45 + 0.45, BTNZ, board, 28), lineLt, 0.6, 60);
-    cap.userData = key === "boot" ? { kind: "boot", key: "boot", name: "Boot button (GPIO9)", text: "Click and hold: GPIO9 reads 0." } : { kind: "rst", key: "rst", name: "RST button", text: "Restarts the chip. Here it re-runs the program." };
-    cap.userData.baseY = cap.position.y; picks.push(cap); if (key === "boot") bootCap = cap;
+    edges(box(2.3, 0.8, 3.1, M(0x30353b, 0.6), x, TOP + 0.4, BTNZ, board), lineLt, 0.7);
+    edges(box(2.3, 0.2, 3.1, steel, x, TOP + 0.9, BTNZ, board), 0x5c666e, 0.7);
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([a, b]) => box(0.45, 0.25, 0.5, steel, x + a * 1.3, TOP + 0.12, BTNZ + b * 1.1, board));
+    const cap = edges(cyl(0.75, 0.6, M(0x121519, 0.45, 0, { envMapIntensity: 0.6 }), x, TOP + 1.0 + 0.3, BTNZ, board, 28), lineLt, 0.6, 60);
+    const info = key === "boot" ? { kind: "boot", key: "boot", name: "Boot button (GPIO9)", text: "Click and hold: GPIO9 reads 0." } : { kind: "rst", key: "rst", name: "RST button", text: "Restarts the chip. Here it re-runs the program." };
+    cap.userData = Object.assign({ baseY: cap.position.y }, info); picks.push(cap); if (key === "boot") bootCap = cap;
+    const hit = new THREE.Mesh(new THREE.BoxGeometry(3.0, 2.4, 3.8), new THREE.MeshBasicMaterial({ visible: false })); hit.position.set(x, TOP + 0.9, BTNZ);   // easier to click than the tiny cap
+    hit.userData = info; board.add(hit); picks.push(hit);
   });
 
   // 2 × 15 male headers: black strips under the board, gold pins pointing down, solder on top
   const pinGeo = new THREE.BoxGeometry(0.64, 10.8, 0.64), solGeo = new THREE.CylinderGeometry(0.22, 0.78, 0.5, 12);
   const pins = new THREE.InstancedMesh(pinGeo, gold, 30), solder = new THREE.InstancedMesh(solGeo, M(0xd5dade, 0.28, 0.8), 30); let n = 0;
+  d.rotation.set(0, 0, 0);
   [-1, 1].forEach((side) => {
-    const x = side * HX; edges(box(2.5, 2.54, 38.1, plastic, x, -TOP - 1.27, 0, board), 0x4a535b, 0.7);
+    const x = side * HX; edges(box(2.5, 2.54, 38.1, plastic, x, -TOP - 1.27, pinZ(7), board), 0x4a535b, 0.7);
     for (let i = 0; i < 15; i++) {
-      const z = (i - 7) * PITCH;
-      d.rotation.set(0, 0, 0); d.scale.set(1, 1, 1); d.position.set(x, TOP + 0.72 - 5.4, z); d.updateMatrix(); pins.setMatrixAt(n, d.matrix);
+      const z = pinZ(i);
+      d.scale.set(1, 1, 1); d.position.set(x, TOP + 0.72 - 5.4, z); d.updateMatrix(); pins.setMatrixAt(n, d.matrix);
       d.position.set(x, TOP + 0.25, z); d.updateMatrix(); solder.setMatrixAt(n++, d.matrix);
       const hit = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.25, 1.8, 8), new THREE.MeshBasicMaterial({ visible: false }));
       hit.position.set(x, TOP + 0.6, z);
@@ -887,7 +905,7 @@ function computeHome() {
   else { cx = (W - 44) / 2; cy = (76 + H - regsH - 28) / 2; fw = W - 72; fh = H - regsH - 116; }
   fw = Math.max(fw, 150); fh = Math.max(fh, 150);
   camera.setViewOffset(W, H, W / 2 - cx, H / 2 - cy, W, H); camera.updateProjectionMatrix();
-  const c = led ? [0, 9, -1.5] : [0, 5.5, BOARD_Z], s = led ? [BB.wid, 22, BB.len + 4] : [PCB.W, 12.5, PCB.L];
+  const c = led ? [0, 9, -1.5] : [0, 5.5, BOARD_Z + SPANC], s = led ? [BB.wid, 22, BB.len + 4] : [PCB.W, 12.5, SPANL];
   const target = new THREE.Vector3(...c), dir = new THREE.Vector3(...VIEW_DIR).normalize();
   home = { target, cx, cy, box: [c, s], fit: [W, H, fw, fh] };
   home.pos = target.clone().addScaledVector(dir, fitDist(dir));
@@ -1195,7 +1213,7 @@ function renderPanel() {
   } else {
     const s = [["Chip", "ESP32-C3, RISC-V RV32IMC, 1 core"], ["Clock", "Up to 160 MHz"], ["SRAM", "400 KB"], ["Flash", "4 MB on the test board"],
       ["Wi-Fi", "802.11 b/g/n, 2.4 GHz"], ["Bluetooth", "Bluetooth 5 (LE)"], ["GPIO", "GPIO0–GPIO21"], ["Logic level", "3.3 V; not 5 V tolerant"],
-      ["USB-UART", "CP2102N on Micro-USB"], ["Buttons", "Boot (GPIO9), RST (EN)"], ["On-board LED", "RGB, addressable, GPIO8"], ["GPIO base", "0x6000_4000"]];
+      ["USB-UART", "CP2102N on Micro-USB"], ["Buttons", "Boot (GPIO9), RST (EN)"], ["Board size", "25.4 × 38.9 mm; header rows 22.86 mm apart, 2.54 mm pitch"], ["On-board LED", "RGB, addressable, GPIO8"], ["GPIO base", "0x6000_4000"]];
     p.innerHTML = `<h2>Specifications</h2><div class="specs">${s.map(([k, v]) => `<div><small>${k}</small><span>${v}</span></div>`).join("")}</div>
       <p style="margin-top:10px">From Espressif's ESP32-C3 datasheet and DevKitM-1 user guide; the flash size was read from our board with esptool. The 3D model is simplified: component positions are approximate.</p>`;
   }
@@ -1364,7 +1382,7 @@ function frame(t) {
   const vis = mix * mix * (3 - 2 * mix);
   glow += (ledTarget - glow) * (reduceMotion ? 1 : Math.min(1, dt * 14));
   ledMat.emissiveIntensity = 0.05 + glow * 2.6; ledLight.intensity = glow * 1.5 * vis; ledHalo.material.opacity = glow * 0.7 * vis;
-  capDown += ((sim.pressed ? 1 : 0) - capDown) * (reduceMotion ? 1 : Math.min(1, dt * 30)); bootCap.position.y = bootCap.userData.baseY - capDown * 0.42;
+  capDown += ((sim.pressed ? 1 : 0) - capDown) * (reduceMotion ? 1 : Math.min(1, dt * 30)); bootCap.position.y = bootCap.userData.baseY - capDown * 0.3;
   renderer.render(scene, camera);
   drawLeaders();
   if (t - lastUi > 90) { lastUi = t; renderRegs(); renderSchem(); if (tab === "how" && LESSONS[lessonIndex].stepper) renderStepper(); }
@@ -1435,6 +1453,5 @@ async function init() {
 init();
 })();
 </script>
-
 </body>
 </html>
