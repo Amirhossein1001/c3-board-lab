@@ -1,0 +1,1371 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="description" content="Interactive 3D ESP32-C3-DevKitM-1 for EECS2021 Lab K: tour the board, hold Boot, and watch the GPIO registers and LED change.">
+<title>C3 Board Lab</title>
+<meta name="claude:viewport-fit-sides" content="cover">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@400;500;600&display=swap">
+<style>
+/* Layout: icon rail | 3D bench (callouts, live register, schematic) | side panel; lesson strip along the bottom.
+   Spacing scale 8 / 12 / 16 px. Cards share one radius (--r) and one header height (--hd). */
+:root {
+  --bg: #e6ebe9; --panel: #fbfcfc; --panel-2: #f1f4f3; --ink: #15212b; --muted: #5a6a72; --line: #d2dbd9;
+  --bench: #e9eeeb; --bench-hi: #f6f8f6; --grid: 27,36,48;
+  --teal: #1c8478; --amber: #b8740a; --coral: #d4583b; --navy: #1b2430;
+  --code-bg: #15202a; --code-ink: #dbe6ea; --code-muted: #7d909a;
+  --shadow: 0 1px 2px rgba(21,33,43,.06), 0 8px 22px rgba(21,33,43,.08);
+  --r: 14px; --r-sm: 10px; --hd: 44px;
+  --f-display: "Chakra Petch", "Segoe UI", system-ui, sans-serif;
+  --f-body: "IBM Plex Sans", "Segoe UI", system-ui, sans-serif;
+  --f-mono: "IBM Plex Mono", ui-monospace, Consolas, monospace;
+}
+/* Deliberately light in every viewer theme: a bright workbench, like a lab bench under lamps. */
+:root, :root[data-theme="dark"] { color-scheme: light; }
+
+html, body { height: 100%; }
+body { margin: 0; background: var(--bg); color: var(--ink); font-family: var(--f-body); font-size: 14px; line-height: 1.45; overflow: hidden; }
+button { font: inherit; color: inherit; }
+[hidden] { display: none !important; }
+:focus-visible { outline: 2px solid var(--teal); outline-offset: 2px; }
+.mono { font-family: var(--f-mono); }
+
+.app { height: 100%; box-sizing: border-box; display: grid; gap: 12px;
+  grid-template-columns: 60px minmax(0, 1fr) 392px; grid-template-rows: minmax(0, 1fr) auto;
+  padding-block: 12px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+.card { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); min-width: 0; box-sizing: border-box; }
+.label { font-family: var(--f-display); font-size: 12px; font-weight: 600; letter-spacing: .1em; text-transform: uppercase; }
+
+/* rail */
+.rail { grid-row: 1 / 3; display: flex; flex-direction: column; align-items: center; gap: 8px; padding-block: 12px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); }
+.rail .mark { width: 36px; height: 36px; margin-bottom: 8px; }
+.rail button { width: 48px; height: 52px; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 2px; padding: 0; border: 0;
+  background: none; border-radius: var(--r-sm); cursor: pointer; font-size: 10.5px; color: var(--muted); }
+.rail button svg { width: 20px; height: 20px; }
+.rail button:hover { background: var(--panel-2); color: var(--ink); }
+.rail button[aria-pressed="true"] { background: color-mix(in srgb, var(--teal) 14%, transparent); color: var(--teal); }
+.rail .spacer { flex: 1; }
+.rail .credit { writing-mode: vertical-rl; transform: rotate(180deg); font-size: 10px; letter-spacing: .08em; color: var(--muted); text-transform: uppercase; }
+
+/* stage: the bench */
+.stage { grid-column: 2; grid-row: 1; position: relative; min-width: 0; min-height: 0; overflow: hidden; border-radius: var(--r);
+  border: 1px solid var(--line); background: radial-gradient(120% 90% at 50% 38%, var(--bench-hi), var(--bench)); }
+.stage.nogl { background: radial-gradient(circle at 1px 1px, rgba(var(--grid), .16) 1px, transparent 1.4px) 0 0 / 22px 22px, var(--bench); }
+.stage canvas { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
+.leaders { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+.leaders path { fill: none; stroke: currentColor; stroke-width: 1.6; stroke-dasharray: 3 4; stroke-linecap: round; stroke-linejoin: round; opacity: .9; }
+.leaders .hot path { stroke-width: 2.4; opacity: 1; }
+.leaders .halo { fill: currentColor; opacity: .25; animation: pulse 2.4s ease-in-out infinite; }
+.leaders .dot { fill: currentColor; stroke: var(--panel); stroke-width: 1.5; }
+@keyframes pulse { 0%, 100% { transform: scale(.75); opacity: .34; } 50% { transform: scale(1.7); opacity: .06; } }
+@keyframes card-in { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+.stage-head { position: absolute; left: 16px; top: 16px; max-width: calc(100% - 300px); display: flex; flex-direction: column; gap: 2px; pointer-events: none; }
+.eyebrow { font-family: var(--f-display); font-size: 11.5px; letter-spacing: .14em; text-transform: uppercase; color: var(--teal); font-weight: 600; }
+.stage-head h1 { margin: 0; font-family: var(--f-display); font-size: 26px; line-height: 1.1; font-weight: 700; text-wrap: balance; }
+.hint { font-size: 11.5px; color: var(--muted); margin-top: 4px; }
+
+.callout { position: absolute; box-sizing: border-box; width: 196px; padding: 8px 12px 10px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r-sm); box-shadow: var(--shadow); cursor: pointer; text-align: left; animation: card-in .45s ease both; }
+.callout h3 { margin: 0 0 2px; font-family: var(--f-display); font-size: 12.5px; letter-spacing: .06em; text-transform: uppercase; display: flex; gap: 8px; align-items: center; line-height: 1.3; }
+.callout h3 i { width: 8px; height: 8px; border-radius: 50%; display: inline-block; flex: none; }
+.callout p { margin: 0; font-size: 12.5px; color: var(--muted); line-height: 1.38; }
+.callout:hover, .callout.hot { border-color: var(--teal); }
+.stage[data-size="m"] .callout, .stage.tight .callout { width: max-content; max-width: 172px; padding: 6px 10px; }
+.stage[data-size="m"] .callout p, .stage.tight .callout p { display: none; }
+.stage[data-size="m"] .callout h3, .stage.tight .callout h3 { margin: 0; font-size: 11.5px; }
+.stage[data-size="s"] .callout, .stage[data-size="s"] .leaders, .stage.nogl .leaders { display: none; }
+
+.regs { position: absolute; left: 16px; bottom: 16px; box-sizing: border-box; width: min(416px, calc(100% - 32px)); padding: 12px; background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow); }
+.regs-top { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+.regs-top span { font-family: var(--f-mono); font-size: 11.5px; color: var(--muted); white-space: nowrap; }
+.bits { display: grid; grid-template-columns: repeat(32, minmax(0, 1fr)); gap: 2px; }
+.bit { display: grid; gap: 1px; min-width: 0; }
+.bit b { height: 20px; border-radius: 3px; background: var(--panel-2); border: 1px solid var(--line); box-sizing: border-box; font-family: var(--f-mono); font-size: 10px; font-weight: 400;
+  display: grid; place-items: center; color: var(--muted); }
+.bit i { height: 10px; font: 400 8.5px/10px var(--f-mono); text-align: center; color: var(--muted); font-style: normal; white-space: nowrap; }
+.bit i.alt { visibility: hidden; }
+.bit.one b { color: var(--ink); font-weight: 600; }
+.bit.b9 b { border-color: var(--amber); } .bit.b9.one b { background: color-mix(in srgb, var(--amber) 22%, transparent); } .bit.b9 i { color: var(--amber); }
+.bit.b3 b { border-color: var(--teal); } .bit.b3.one b { background: color-mix(in srgb, var(--teal) 22%, transparent); } .bit.b3 i { color: var(--teal); }
+.stage:not([data-size="l"]) .bits { grid-template-columns: repeat(16, minmax(0, 1fr)); row-gap: 4px; }
+.stage:not([data-size="l"]) .bit i.alt { visibility: visible; }
+.reg-lines { margin: 8px 0 0; display: grid; grid-template-columns: auto 1fr; gap: 4px 12px; font-family: var(--f-mono); font-size: 12px; font-variant-numeric: tabular-nums; }
+.reg-lines dt { color: var(--muted); } .reg-lines dd { margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.reg-lines .w1ts { color: var(--teal); } .reg-lines .w1tc { color: var(--coral); }
+.boot-btn { margin-top: 12px; width: 100%; height: 36px; border-radius: var(--r-sm); border: 1px solid var(--amber); background: color-mix(in srgb, var(--amber) 12%, var(--panel));
+  font-family: var(--f-display); font-weight: 600; letter-spacing: .06em; cursor: pointer; user-select: none; touch-action: none; }
+.boot-btn.down { background: var(--amber); color: #15212b; }
+.stage[data-size="m"] .regs { width: calc(100% - 232px - 44px); min-width: 264px; }
+.stage:not([data-size="l"]) .reg-lines { font-size: 11px; gap: 4px 8px; }
+
+.view-ctl { position: absolute; right: 16px; top: 16px; display: flex; gap: 2px; padding: 4px;
+  background: var(--panel); border: 1px solid var(--line); border-radius: var(--r-sm); box-shadow: var(--shadow); }
+.view-ctl button { width: 32px; height: 32px; display: grid; place-items: center; border: 0; background: none; border-radius: 7px; cursor: pointer; color: var(--muted); padding: 0; }
+.view-ctl button:hover { background: var(--panel-2); color: var(--ink); }
+.view-ctl button[aria-pressed="true"] { color: var(--teal); background: color-mix(in srgb, var(--teal) 12%, transparent); }
+.view-ctl svg { width: 17px; height: 17px; }
+.view-ctl .sep { width: 1px; margin: 6px 3px; background: var(--line); }
+.schem { position: absolute; right: 16px; bottom: 16px; width: 232px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r); box-shadow: var(--shadow); overflow: hidden; }
+.schem header { display: flex; justify-content: space-between; align-items: center; height: 32px; padding: 0 8px 0 12px; border-bottom: 1px solid var(--line); color: var(--muted); }
+.schem header .label { font-size: 11px; letter-spacing: .12em; }
+.schem header button { border: 0; background: none; cursor: pointer; color: var(--muted); font-size: 16px; line-height: 1; width: 24px; height: 24px; border-radius: 6px; }
+.schem header button:hover { background: var(--panel-2); color: var(--ink); }
+.schem svg { display: block; width: 100%; height: auto; }
+.tip { position: absolute; pointer-events: none; padding: 6px 10px; border-radius: 8px; background: var(--navy); color: #e8f0f2; font-size: 12px;
+  max-width: 240px; box-shadow: var(--shadow); transform: translate(-50%, calc(-100% - 12px)); z-index: 3; }
+.tip b { font-family: var(--f-mono); }
+
+.loader { position: absolute; inset: 0; z-index: 5; display: grid; place-items: center; background: radial-gradient(120% 90% at 50% 38%, var(--bench-hi), var(--bench)); transition: opacity .45s ease; }
+.loader.done { opacity: 0; pointer-events: none; }
+.loader.fail { background: none; z-index: 0; pointer-events: none; } .loader.fail .track { display: none; }
+.loader-in { display: grid; justify-items: center; gap: 12px; padding: 16px; text-align: center; }
+.loader svg { width: 52px; height: 52px; }
+.loader .name { font-family: var(--f-display); font-weight: 700; font-size: 22px; letter-spacing: .04em; }
+.loader .name span { color: var(--teal); }
+.loader .track { width: 180px; height: 5px; border-radius: 3px; background: rgba(var(--grid), .14); overflow: hidden; }
+.loader .track i { display: block; height: 100%; width: 8%; border-radius: 3px; background: var(--teal); transition: width .35s ease; }
+.loader .msg { font-family: var(--f-display); font-size: 11px; letter-spacing: .16em; text-transform: uppercase; color: var(--muted); max-width: 300px; }
+
+/* side panel */
+.side { grid-column: 3; grid-row: 1; display: grid; grid-template-rows: auto minmax(0, 5fr) minmax(0, 6fr); gap: 12px; min-width: 0; min-height: 0; }
+.brand { display: flex; align-items: center; justify-content: space-between; gap: 12px; height: 60px; padding: 0 16px; }
+.brand .name { font-family: var(--f-display); font-weight: 700; font-size: 19px; letter-spacing: .02em; line-height: 1; white-space: nowrap; }
+.brand .name span { color: var(--teal); }
+.brand .sub { font-size: 11.5px; color: var(--muted); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.brand > div:first-child { min-width: 0; }
+.progress { flex: none; text-align: right; font-size: 11.5px; color: var(--muted); width: 104px; }
+.progress .track { height: 6px; border-radius: 4px; background: var(--panel-2); border: 1px solid var(--line); margin-top: 4px; overflow: hidden; }
+.progress .track i { display: block; height: 100%; background: var(--teal); width: 0; transition: width .3s; }
+
+.info { display: flex; flex-direction: column; overflow: hidden; min-height: 0; }
+.tabs { flex: none; display: flex; gap: 4px; height: var(--hd); box-sizing: border-box; padding: 0 8px; border-bottom: 1px solid var(--line); }
+.tabs button { flex: 1 1 auto; height: 100%; border: 0; background: none; padding: 0 6px; cursor: pointer; font-family: var(--f-display); font-size: 11.5px; font-weight: 600;
+  letter-spacing: .07em; text-transform: uppercase; color: var(--muted); border-bottom: 2px solid transparent; border-top: 2px solid transparent; white-space: nowrap; }
+.tabs button:hover { color: var(--ink); }
+.tabs button[aria-selected="true"] { color: var(--ink); border-bottom-color: var(--teal); }
+.tabpanel { flex: 1 1 0; padding: 16px; overflow: auto; min-height: 0; scrollbar-width: thin; }
+.tabpanel h2 { margin: 0 0 8px; font-family: var(--f-display); font-size: 17px; line-height: 1.25; font-weight: 700; text-wrap: balance; }
+.tabpanel p { margin: 0 0 8px; color: var(--muted); }
+.tabpanel p b, .tabpanel li b { color: var(--ink); }
+.tabpanel > :last-child { margin-bottom: 0; }
+.steps { list-style: none; margin: 12px 0 0; padding: 0; display: grid; gap: 8px; }
+.steps li { display: grid; grid-template-columns: 22px 1fr; gap: 8px; align-items: start; color: var(--muted); }
+.steps li > i { font-style: normal; width: 22px; height: 22px; border-radius: 6px; display: grid; place-items: center; font-size: 11.5px; font-weight: 600;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--ink); font-family: var(--f-mono); box-sizing: border-box; }
+code { font-family: var(--f-mono); font-size: .92em; background: var(--panel-2); border: 1px solid var(--line); padding: 0 4px; border-radius: 4px; color: var(--ink); }
+.pin-table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.pin-table th { text-align: left; font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); font-weight: 600; padding: 4px; border-bottom: 1px solid var(--line); }
+.pin-table td { padding: 4px; border-bottom: 1px solid var(--line); vertical-align: top; }
+.pin-table td:first-child { font-family: var(--f-mono); color: var(--muted); width: 26px; }
+.pin-table td:nth-child(2) { font-family: var(--f-mono); font-weight: 600; white-space: nowrap; width: 52px; }
+.pin-table tr.use td { background: color-mix(in srgb, var(--teal) 9%, transparent); }
+.pin-table tr.sel td { background: color-mix(in srgb, var(--amber) 16%, transparent); }
+.pin-table tr { cursor: pointer; }
+.specs { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.specs div { padding: 8px 12px; background: var(--panel-2); border: 1px solid var(--line); border-radius: var(--r-sm); min-width: 0; }
+.specs small { display: block; font-size: 10px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.specs span { font-size: 12.5px; }
+.stepper { margin-top: 12px; border: 1px solid var(--line); border-radius: var(--r-sm); overflow: hidden; }
+.stepper table { width: 100%; border-collapse: collapse; font-family: var(--f-mono); font-size: 12px; }
+.stepper td { padding: 4px 8px; border-bottom: 1px solid var(--line); }
+.stepper tr.cur td { background: color-mix(in srgb, var(--amber) 18%, transparent); }
+.stepper .bar { display: flex; gap: 8px; padding: 8px; background: var(--panel-2); align-items: center; flex-wrap: wrap; }
+.btn { border: 1px solid var(--line); background: var(--panel); border-radius: 8px; padding: 6px 12px; cursor: pointer; font-weight: 600; font-size: 12.5px; }
+.btn:hover { border-color: var(--teal); }
+.btn.primary { background: var(--teal); border-color: var(--teal); color: #fff; }
+.toggle { display: flex; gap: 8px; align-items: center; margin: 8px 0; font-size: 13px; cursor: pointer; }
+.asm { margin: 8px 0 0; padding: 8px 12px; background: var(--code-bg); color: var(--code-ink); border-radius: 8px; font-family: var(--f-mono); font-size: 11.5px; line-height: 1.5; overflow-x: auto; }
+.asm .hl { color: #f2c46d; }
+.asm .lbl { color: var(--code-muted); }
+
+.code-card { display: flex; flex-direction: column; min-height: 0; overflow: hidden; }
+.code-head { flex: none; display: flex; align-items: center; justify-content: space-between; height: var(--hd); box-sizing: border-box; padding: 0 8px 0 16px; border-bottom: 1px solid var(--line); gap: 8px; }
+.code-head .file { font-family: var(--f-mono); font-size: 11.5px; color: var(--muted); margin-left: 8px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.code-head .acts { display: flex; gap: 4px; }
+.icon-btn { width: 30px; height: 30px; display: grid; place-items: center; border: 1px solid var(--line); background: var(--panel); border-radius: 8px; cursor: pointer; color: var(--muted); padding: 0; }
+.icon-btn:hover { color: var(--ink); border-color: var(--teal); }
+.icon-btn.run { background: var(--teal); border-color: var(--teal); color: #fff; }
+.icon-btn.stop { background: var(--coral); border-color: var(--coral); color: #fff; }
+.icon-btn svg { width: 15px; height: 15px; }
+.code { flex: 1 1 0; min-height: 0; overflow: auto; margin: 0; background: var(--code-bg); color: var(--code-ink); font-family: var(--f-mono); font-size: 12px; line-height: 1.55; padding: 8px 0; scrollbar-width: thin; }
+.code .ln { display: grid; grid-template-columns: 36px 1fr; }
+.code .ln > span:first-child { color: var(--code-muted); text-align: right; padding-right: 12px; user-select: none; }
+.code .ln > span:last-child { white-space: pre; padding-right: 12px; }
+.tk-c { color: #7f939c; font-style: italic; } .tk-k { color: #7cc7ff; } .tk-n { color: #f2c46d; } .tk-s { color: #a6dba0; } .tk-op { color: #ffb38a; } .tk-r { color: #c7a6ff; } .tk-l { color: #8fe3d6; }
+.serial { flex: none; border-top: 1px solid var(--line); display: flex; flex-direction: column; }
+.serial-head { display: flex; align-items: center; justify-content: space-between; height: 36px; box-sizing: border-box; padding: 0 8px 0 16px; color: var(--muted); }
+.serial-head .label { font-size: 11px; }
+.serial-head .dot { display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--line); margin-right: 8px; }
+.serial-head .dot.on { background: var(--teal); }
+.serial-head .btn { padding: 2px 8px; font-size: 11px; }
+.serial-out { height: clamp(84px, 15vh, 132px); box-sizing: border-box; overflow: auto; margin: 0; padding: 8px 16px; background: var(--code-bg); color: #c9d6db; font-family: var(--f-mono); font-size: 11.5px; line-height: 1.45; white-space: pre-wrap; word-break: break-word; scrollbar-width: thin; }
+.serial-out .i { color: #7bd88f; } .serial-out .w { color: #f2c46d; } .serial-out .sys { color: #7f939c; } .serial-out .me { color: #fff; }
+
+/* lesson strip: six equal cards */
+.lessons { grid-column: 2 / 4; grid-row: 2; min-width: 0; }
+.lesson-list { display: grid; grid-auto-flow: column; grid-auto-columns: minmax(172px, 1fr); gap: 8px; overflow-x: auto; scrollbar-width: thin; }
+.lesson { height: 56px; box-sizing: border-box; display: grid; grid-template-columns: 40px minmax(0, 1fr); align-items: center; gap: 8px; padding: 0 12px 0 8px; background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--r); cursor: pointer; text-align: left; position: relative; min-width: 0; }
+.lesson:hover { border-color: color-mix(in srgb, var(--teal) 55%, var(--line)); }
+.lesson svg { width: 40px; height: 30px; }
+.lesson .tx { min-width: 0; display: grid; }
+.lesson .t { font-family: var(--f-display); font-weight: 600; font-size: 12px; letter-spacing: .03em; text-transform: uppercase; line-height: 1.2; overflow: hidden; padding-right: 12px; display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.lesson .s { font-size: 11.5px; color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lesson[aria-current="true"] { border-color: var(--teal); box-shadow: inset 0 0 0 1px var(--teal); background: color-mix(in srgb, var(--teal) 8%, var(--panel)); }
+.lesson .done { position: absolute; right: 8px; top: 8px; width: 10px; height: 10px; border-radius: 50%; border: 1.5px solid var(--line); box-sizing: border-box; }
+.lesson .done.yes { background: var(--teal); border-color: var(--teal); }
+
+/* drawer */
+.drawer-back { position: fixed; inset: 0; background: rgba(10,16,22,.35); z-index: 20; }
+.drawer { position: fixed; top: 0; bottom: 0; left: 0; width: min(440px, 100%); z-index: 21; background: var(--panel); border-right: 1px solid var(--line);
+  padding: max(16px, env(safe-area-inset-top, 0px)) 16px 16px max(16px, env(safe-area-inset-left, 0px)); overflow: auto; box-sizing: border-box; }
+.drawer h2 { font-family: var(--f-display); margin: 0 0 12px; font-size: 20px; }
+.drawer h3 { font-family: var(--f-display); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 16px 0 8px; }
+.drawer .close { float: right; }
+.drawer table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+.drawer td, .drawer th { padding: 4px 8px; border-bottom: 1px solid var(--line); text-align: left; vertical-align: top; }
+.drawer th { font-size: 10.5px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); }
+.drawer .lesson-row { display: grid; grid-template-columns: 46px 1fr; gap: 12px; padding: 12px; border: 1px solid var(--line); border-radius: var(--r); margin-bottom: 8px; cursor: pointer; background: var(--panel-2); width: 100%; text-align: left; box-sizing: border-box; }
+.drawer .lesson-row:hover { border-color: var(--teal); }
+.drawer p { color: var(--muted); }
+kbd { font-family: var(--f-mono); font-size: 11.5px; padding: 1px 6px; border: 1px solid var(--line); border-bottom-width: 2px; border-radius: 5px; background: var(--panel-2); }
+
+@media (max-width: 1100px) { .app { grid-template-columns: 60px minmax(0, 1fr) 340px; } }
+@media (max-width: 900px) {
+  html, body { height: auto; } body { overflow: auto; overflow-x: hidden; }
+  .app { height: auto; grid-template-columns: minmax(0, 1fr); grid-template-rows: auto; }
+  .rail { grid-row: auto; flex-direction: row; justify-content: space-around; padding: 4px; gap: 4px; }
+  .rail .mark, .rail .spacer, .rail .credit { display: none; }
+  .stage { grid-column: 1; grid-row: auto; height: min(86vh, 640px); min-height: 520px; }
+  .side { grid-column: 1; grid-row: auto; display: flex; flex-direction: column; }
+  .lessons { grid-column: 1; grid-row: auto; }
+  .lesson-list { grid-auto-flow: row; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); overflow: visible; }
+  .tabpanel { flex: none; max-height: 420px; } .code { flex: none; max-height: 340px; }
+  .serial-out { height: 132px; }
+}
+.stage[data-size="s"] .schem, .stage[data-size="s"] .hint { display: none; }
+.stage[data-size="s"] .view-ctl { flex-direction: column; right: 12px; top: 12px; }
+.stage[data-size="s"] .view-ctl .sep { width: auto; height: 1px; margin: 3px 6px; }
+.stage[data-size="s"] .stage-head { max-width: calc(100% - 76px); }
+.stage[data-size="s"] .stage-head h1, .stage[data-size="m"] .stage-head h1 { font-size: 21px; }
+@media (prefers-reduced-motion: reduce) {
+  .progress .track i, .loader, .loader .track i { transition: none; }
+  .leaders .halo, .callout { animation: none; }
+}
+</style>
+
+<style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}img{max-width:100%}</style>
+</head>
+<body>
+<div class="app">
+  <nav class="rail" aria-label="Main">
+    <svg class="mark" viewBox="0 0 36 36" aria-hidden="true"><rect x="7" y="4" width="22" height="28" rx="3" fill="var(--navy)"/><rect x="11" y="7" width="14" height="11" rx="1.5" fill="var(--teal)"/><g fill="var(--amber)"><rect x="3" y="9" width="4" height="2"/><rect x="3" y="14" width="4" height="2"/><rect x="3" y="19" width="4" height="2"/><rect x="3" y="24" width="4" height="2"/><rect x="29" y="9" width="4" height="2"/><rect x="29" y="14" width="4" height="2"/><rect x="29" y="19" width="4" height="2"/><rect x="29" y="24" width="4" height="2"/></g><circle cx="18" cy="26" r="2.6" fill="var(--coral)"/></svg>
+    <button id="nav-board" aria-pressed="true" title="Board"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="6" y="3" width="12" height="18" rx="2"/><rect x="9" y="6" width="6" height="5"/><path d="M3 7h3M3 11h3M3 15h3M18 7h3M18 11h3M18 15h3"/></svg>Board</button>
+    <button id="nav-lessons" aria-pressed="false" title="Lessons"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h6a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H4zM20 5h-6a2 2 0 0 0-2 2v13a2 2 0 0 1 2-2h6z"/></svg>Lessons</button>
+    <button id="nav-regs" aria-pressed="false" title="Register map"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h2v6H7zM11 9h2v6h-2zM15 9h2v6h-2z"/></svg>Registers</button>
+    <button id="nav-keys" aria-pressed="false" title="Controls and shortcuts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h1M11 10h1M15 10h1M7 14h10"/></svg>Keys</button>
+    <div class="spacer"></div>
+    <div class="credit">EECS2021 · Lab K</div>
+  </nav>
+
+  <section class="stage" id="stage" data-size="l" aria-label="3D model of the ESP32-C3-DevKitM-1">
+    <div class="loader" id="loader"><div class="loader-in">
+      <svg viewBox="0 0 36 36" aria-hidden="true"><rect x="7" y="4" width="22" height="28" rx="3" fill="var(--navy)"/><rect x="11" y="7" width="14" height="11" rx="1.5" fill="var(--teal)"/><g fill="var(--amber)"><rect x="3" y="9" width="4" height="2"/><rect x="3" y="14" width="4" height="2"/><rect x="3" y="19" width="4" height="2"/><rect x="3" y="24" width="4" height="2"/><rect x="29" y="9" width="4" height="2"/><rect x="29" y="14" width="4" height="2"/><rect x="29" y="19" width="4" height="2"/><rect x="29" y="24" width="4" height="2"/></g><circle cx="18" cy="26" r="2.6" fill="var(--coral)"/></svg>
+      <div class="name">C3 <span>Board Lab</span></div>
+      <div class="track" role="progressbar" aria-label="Loading" aria-valuemin="0" aria-valuemax="100" aria-valuenow="8" id="load-track"><i id="load-bar"></i></div>
+      <div class="msg" id="load-msg">Setting up the bench</div>
+    </div></div>
+    <svg class="leaders" id="leaders" aria-hidden="true"></svg>
+    <div class="stage-head" id="stage-head"><span class="eyebrow" id="st-eyebrow">Lesson 1</span><h1 id="st-title">Meet the C3 board</h1><div class="hint" id="hint">Drag to orbit · scroll to zoom · hold <b>B</b> or click Boot</div></div>
+    <div id="callouts"></div>
+    <div class="regs" id="regs">
+      <div class="regs-top"><b class="label">GPIO_IN_REG</b><span>0x6000403C = <span id="in-hex">0x00000200</span></span></div>
+      <div class="bits" id="bits"></div>
+      <dl class="reg-lines">
+        <dt>last sw</dt><dd id="last-write">none yet</dd>
+        <dt>GPIO3 out</dt><dd id="out-state">0 · LED off</dd>
+      </dl>
+      <button class="boot-btn" id="boot-btn" aria-label="Hold the Boot button">HOLD BOOT (GPIO9)</button>
+    </div>
+    <div class="view-ctl" id="view-ctl" role="toolbar" aria-label="View">
+      <button id="v-left" title="Turn left (Q)" aria-label="Turn left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 12a8 8 0 1 0 2.3-5.7M4 4v4h4"/></svg></button>
+      <button id="v-right" title="Turn right (E)" aria-label="Turn right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12a8 8 0 1 1-2.3-5.7M20 4v4h-4"/></svg></button>
+      <button id="v-out" title="Zoom out (-)" aria-label="Zoom out"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14"/></svg></button>
+      <button id="v-in" title="Zoom in (+)" aria-label="Zoom in"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M5 12h14M12 5v14"/></svg></button>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="v-top" title="Top view (T)" aria-label="Top view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="5" y="4" width="14" height="16" rx="2"/><path d="M9 8h6v5H9z"/></svg></button>
+      <button id="v-reset" title="Reset view (R)" aria-label="Reset view"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><path d="M12 2v4M12 18v4M2 12h4M18 12h4"/></svg></button>
+      <span class="sep" aria-hidden="true"></span>
+      <button id="v-schem" title="Show schematic" aria-label="Show schematic" aria-pressed="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12h5l2-4 4 8 2-4h5"/></svg></button>
+    </div>
+    <div class="schem" id="schem"><header><span class="label">Schematic</span><button id="schem-x" aria-label="Hide schematic">×</button></header><div id="schem-svg"></div></div>
+    <div class="tip" id="tip" hidden></div>
+  </section>
+
+  <aside class="side">
+    <div class="card brand">
+      <div><div class="name">C3 <span>Board Lab</span></div><div class="sub">ESP32-C3-DevKitM-1 · memory-mapped I/O</div></div>
+      <div class="progress"><span id="prog-text">0 / 6 tried</span><div class="track"><i id="prog-bar"></i></div></div>
+    </div>
+    <div class="card info">
+      <div class="tabs" role="tablist" aria-label="Lesson details">
+        <button role="tab" id="tab-overview" aria-selected="true" aria-controls="panel">Overview</button>
+        <button role="tab" id="tab-pinout" aria-selected="false" aria-controls="panel">Pinout</button>
+        <button role="tab" id="tab-how" aria-selected="false" aria-controls="panel">How it works</button>
+        <button role="tab" id="tab-specs" aria-selected="false" aria-controls="panel">Specs</button>
+      </div>
+      <div class="tabpanel" id="panel" role="tabpanel"></div>
+    </div>
+    <div class="card code-card">
+      <div class="code-head"><b class="label">Try it<span class="file" id="code-file">main.c</span></b>
+        <div class="acts">
+          <button class="icon-btn" id="copy" title="Copy code" aria-label="Copy code"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="8" y="8" width="12" height="12" rx="2"/><path d="M16 8V5a1 1 0 0 0-1-1H5a1 1 0 0 0-1 1v10a1 1 0 0 0 1 1h3"/></svg></button>
+          <button class="icon-btn run" id="run" title="Flash and run (simulated)" aria-label="Flash and run"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z"/></svg></button>
+        </div>
+      </div>
+      <pre class="code" id="code" tabindex="0" aria-label="Lesson code"></pre>
+      <div class="serial">
+        <div class="serial-head"><span class="label"><span class="dot" id="ser-dot"></span>Serial monitor · <span id="ser-state">stopped</span></span><button class="btn" id="ser-clear">Clear</button></div>
+        <pre class="serial-out" id="serial" aria-live="polite"></pre>
+      </div>
+    </div>
+  </aside>
+
+  <div class="lessons"><div class="lesson-list" id="lesson-list" aria-label="Lessons"></div></div>
+</div>
+<div id="drawer-root"></div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lines/LineSegmentsGeometry.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lines/LineMaterial.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/lines/LineSegments2.js"></script>
+<script>
+(() => {
+"use strict";
+const $ = (id) => document.getElementById(id);
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* ---------- board data (Espressif ESP32-C3-DevKitM-1 user guide; pin 1 at the antenna end) ---------- */
+const J1 = ["GND","3V3","3V3","IO2","IO3","GND","RST","GND","IO0","IO1","IO10","GND","5V","5V","GND"];
+const J3 = ["GND","TX","RX","GND","IO9","IO8","GND","IO7","IO6","IO5","IO4","GND","IO18","IO19","GND"];
+function pinInfo(label, header, n) {
+  const g = { "IO3": "GPIO3. Lab K drives the LED from here (long leg).", "IO9": "GPIO9, also wired to the Boot button. Strapping pin: keep it high at reset.",
+    "IO8": "GPIO8, drives the on-board RGB LED. Strapping pin.", "IO2": "GPIO2. Strapping pin: leave it unloaded at reset.",
+    "IO0": "GPIO0. Lab K exercise K03 moves the LED here.", "IO1": "GPIO1, free for your circuits.", "IO10": "GPIO10, free for your circuits.",
+    "IO4": "GPIO4, free for your circuits.", "IO5": "GPIO5, free for your circuits.", "IO6": "GPIO6, free for your circuits.", "IO7": "GPIO7, free for your circuits.",
+    "IO18": "GPIO18, also the chip's USB D−.", "IO19": "GPIO19, also the chip's USB D+.", "TX": "GPIO21, UART0 TX: your printf output.", "RX": "GPIO20, UART0 RX.",
+    "GND": "Ground. The LED's short leg goes to one of these.", "3V3": "3.3 V from the regulator. GPIO logic is 3.3 V.", "5V": "5 V from USB. Never connect it to a GPIO.",
+    "RST": "Chip enable (EN). Pulling it low resets the chip, like the RST button." };
+  const used = (header === "J1" && (n === 5 || n === 6)) || (header === "J3" && n === 5);
+  return { label, header, n, text: g[label] || "", used };
+}
+
+/* ---------- lessons ---------- */
+const GPIOINIT_NOTE = "// gpioInit(...) as in the handout";
+const LESSONS = [
+  { id: "board", title: "Meet the C3 board", short: "Tour the parts", mode: "hello", led: false, file: "main.c", lang: "c",
+    code: `#include <stdio.h>
+
+void app_main(void) {
+    printf("Hello from the ESP32-C3\\n");
+}`,
+    callouts: [
+      { key: "module", color: "teal", title: "RISC-V module", text: "ESP32-C3-MINI-1: one 160 MHz RV32IMC core with Wi-Fi and Bluetooth LE." },
+      { key: "antenna", color: "coral", title: "PCB antenna", text: "The zigzag trace sends and receives 2.4 GHz radio. Keep metal away from it." },
+      { key: "headers", color: "amber", title: "Header pins", text: "2 × 15 pins: IO, 3V3, 5V and GND. GPIO logic is 3.3 V." },
+      { key: "usb", color: "teal", title: "Micro-USB", text: "Power, flashing and the serial monitor, all through one cable." },
+      { key: "boot", color: "amber", title: "Boot button", text: "Wired to GPIO9. Reads 0 while you hold it. Try it below." },
+      { key: "rgb", color: "coral", title: "RGB LED", text: "Addressable LED on GPIO8. Lab K uses an external LED instead." },
+    ],
+    overview: `<h2>The ESP32-C3-DevKitM-1</h2><p>The board you use for Lab K and the labs after it. The chip is a <b>32-bit RISC-V</b> core (RV32IMC) running at up to 160 MHz, inside the shielded module.</p><p>Hold the <b>Boot</b> button below the board, or press <kbd>B</kbd>. Watch <b>bit 9</b> of GPIO_IN_REG fall to 0: you are already reading memory-mapped I/O.</p>`,
+    how: [["Press <b>Run</b> to flash this program (simulated). The board resets and prints its boot log."], ["<code>app_main</code> runs once, after ESP-IDF has started the system. It is ESP-IDF's version of <code>main</code>."], ["When it returns, the log says <code>Returned from app_main()</code>. Press RST, or Run again, to see it again."], ["Click any header pin on the model to see what it does."]],
+  },
+  { id: "k02", title: "Follow the button", short: "K02 · library calls", mode: "follow", led: true, file: "K02 · outline", lang: "c",
+    code: `// K02 in plain words (an outline, not the lab's code)
+//
+// once, at the start:
+//   turn the task watchdog off      (the loop never pauses)
+//   make GPIO9 an input, pull-up on (the Boot button)
+//   make GPIO3 an output            (the external LED)
+//
+// then forever:
+//   level = GPIO9's level, read through the ESP-IDF library
+//   drive GPIO3 to that level, through the library
+//
+// Boot released -> 1 -> LED on
+// Boot held     -> 0 -> LED off`,
+    callouts: [
+      { key: "led", color: "coral", title: "External LED", text: "On while GPIO3 is 1. Long leg on IO3, short leg on GND." },
+      { key: "io3", color: "teal", title: "IO3 (J1 pin 5)", text: "Set up once as an output; then it drives the LED." },
+      { key: "gnd", color: "amber", title: "GND (J1 pin 6)", text: "The LED's return path, right next to IO3." },
+      { key: "boot", color: "amber", title: "Boot = GPIO9", text: "Input with a pull-up: released reads 1, held reads 0." },
+      { key: "module", color: "teal", title: "The loop", text: "Reads, writes, repeats. Millions of times a second: polling." },
+      { key: "bread", color: "teal", title: "Breadboard", text: "Each row of five holes is joined inside. The board straddles the centre channel." },
+    ],
+    overview: `<h2>K02: copy the button to the LED</h2><p>The first program uses ESP-IDF's library calls <code>gpio_get_level</code> and <code>gpio_set_level</code>. Press <b>Run</b>, then hold <b>Boot</b>.</p><p>The LED is <b>on</b> while you leave Boot alone and <b>off</b> while you hold it, because the button reads 1 when released.</p><p><b>Exercise K02:</b> change one line so the LED behaves the other way round.</p>`,
+    how: [["Pin 9 is set up once as an input with its internal pull-up, so it reads 1 until you press."], ["Pin 3 is set up once as an output, so writing it drives the LED."], ["The task watchdog is switched off first: it would complain about a loop that never pauses."], ["The loop copies the level of pin 9 to pin 3, forever. The library hides the registers; the next lesson shows them."]],
+  },
+  { id: "k03", title: "MMIO in C", short: "K03 · pointers", mode: "follow", led: true, file: "K03 · outline", lang: "c",
+    code: `// K03 in plain words: the same loop, by hand
+//
+// to read pin n:
+//   word  = one 32-bit load from GPIO_IN_REG  (0x6000403C)
+//   level = bit n of word   (shift right by n, keep bit 0)
+//
+// to write pin n:
+//   mask = a word with only bit n set
+//   level 1: store mask to GPIO_OUT_W1TS  (0x60004008)
+//   level 0: store mask to GPIO_OUT_W1TC  (0x6000400C)
+//
+// forever: read pin 9, write that level to pin 3`,
+    callouts: [
+      { key: "module", color: "teal", title: "GPIO block", text: "Inside the chip at 0x6000_4000. Each register is a 32-bit word." },
+      { key: "boot", color: "amber", title: "Read 0x6000403C", text: "GPIO_IN_REG: bit 9 is the Boot button." },
+      { key: "io3", color: "teal", title: "Write 1 << 3", text: "To W1TS (0x…08) for on, W1TC (0x…0C) for off." },
+      { key: "led", color: "coral", title: "Same behaviour", text: "Identical to K02, with no library calls." },
+    ],
+    overview: `<h2>K03: the registers behind the library</h2><p>The same program with our own <b>get01c</b> and <b>set01c</b>. They read and write the GPIO registers through pointers to fixed addresses.</p><p>Run it and hold Boot. The panel on the board shows each <b>store</b>: <code>0x00000008</code> to W1TS or to W1TC.</p><p><b>Exercise K03:</b> move the LED to GPIO0. What value does set01c write now?</p>`,
+    how: [["<code>(uint32_t *)0x6000403C</code> turns a number into the address of a 32-bit word."], ["<code>*</code> loads that word: the level of every pin at once."], ["<code>&gt;&gt; in</code> then <code>&amp; 1</code> pick out one pin."], ["To set a pin, write a 1 in its bit to <b>W1TS</b>; to clear it, to <b>W1TC</b>. Zeros leave other pins alone."]],
+  },
+  { id: "k04", title: "MMIO in assembly", short: "K04 · get01a", mode: "follow", led: true, file: "K04 · outline", lang: "asm", stepper: true,
+    code: `# K04 in plain words (RISC-V)
+#
+# reading a pin (given to you in the lab):
+#   build the GPIO base, 0x6000_4000, in a register
+#   load the word at base + 0x03C
+#   shift it right by the pin number held in a0
+#   keep bit 0, return it in a0
+#
+# K04A, writing a pin: you write this
+#   mask = 1 shifted left by the pin number
+#   use a1 to choose W1TS (+0x008) or W1TC (+0x00C)
+#   one store, then return
+#
+# K04B, the loop: you write this
+#   keep in and out safe across calls: a0 is overwritten
+#   read Boot, write the LED, repeat`,
+    callouts: [
+      { key: "module", color: "teal", title: "lui: the base", text: "Builds the upper 20 bits of 0x6000_4000." },
+      { key: "boot", color: "amber", title: "lw: all pins", text: "One load at base + 0x03C. Bit 9 is this button." },
+      { key: "io3", color: "teal", title: "Your set01a", text: "Stores 1 << a0 to offset 0x008 or 0x00C." },
+      { key: "led", color: "coral", title: "Watch a0", text: "get01a returns in a0 and overwrites the pin number." },
+    ],
+    overview: `<h2>K04: the same thing in RISC-V</h2><p><b>get01a</b> is given. You write <b>set01a</b> (K04A) and <b>but01ma</b> (K04B). The simulator runs the finished program so you can see what yours should do.</p><p>Open <b>How it works</b> and step through get01a with the live register values.</p><p><b>The trap:</b> after the call to get01a, a0 holds the button state, not the pin number. Keep <i>in</i> and <i>out</i> somewhere a call can't change.</p>`,
+    how: [["<code>lui</code> fills the upper 20 bits of a register: 0x60004 becomes 0x60004000."], ["An <code>lw</code> at offset 0x03C is a real load from GPIO_IN_REG. In assembly every lw happens."], ["<code>srl</code>, not <code>srli</code>: the shift amount is in a register."], ["Step through it below with Boot held and released."]],
+  },
+  { id: "k05", title: "Toggle on each press", short: "K05 · edges", mode: "toggle", led: true, file: "K05 · outline", lang: "c",
+    code: `// K05 in plain words: toggle on each press
+//
+// remember between passes:
+//   last = the button's previous level  (starts at 1)
+//   led  = the LED's state              (starts at 0)
+//
+// forever:
+//   now = level of pin 9
+//   if last is 1 and now is 0:     a press (falling edge)
+//       flip led and write it to pin 3
+//   if now differs from last:      print now, last and led
+//   last = now`,
+    callouts: [
+      { key: "boot", color: "amber", title: "A press is an edge", text: "Only the 1 → 0 change counts. Releasing does nothing." },
+      { key: "led", color: "coral", title: "lstate", text: "The LED remembers its state between presses." },
+      { key: "usb", color: "teal", title: "Two lines per press", text: "The C version prints bstate, bold and lstate." },
+    ],
+    overview: `<h2>K05: flip the LED once per press</h2><p>Now the LED <b>toggles</b> each time you press Boot. The program has to remember two things: the button's last value (<b>bold</b>) and the LED's state (<b>lstate</b>).</p><p>Run it and press Boot a few times. The serial monitor prints two lines per press, like the real board did.</p><p>You write the assembly version, <b>sbut01ma</b>, without the printf.</p>`,
+    how: [["A press is the only moment the old level is 1 and the new one is 0."], ["Flipping 0 ↔ 1 is one subtraction from 1, or in assembly an <code>xori</code> with 1."], ["The previous level starts at 1, so holding Boot through reset isn't counted as a press."], ["On the test board, 40 presses gave 40 clean edges: no bounce."]],
+  },
+  { id: "volatile", title: "Why volatile", short: "-O2 freezes the LED", mode: "frozen", led: true, file: "K03 · the read", lang: "c",
+    code: `// One read of GPIO_IN_REG, written two ways
+//
+// a plain pointer:
+//   value = *(uint32_t *) GPIO_IN_REG
+//   the compiler may load once and keep reusing the value
+//
+// a volatile pointer:
+//   value = *(volatile uint32_t *) GPIO_IN_REG
+//   every read becomes a real lw, every time round the loop`,
+    callouts: [
+      { key: "boot", color: "amber", title: "Pressed, not seen", text: "The -O2 loop read GPIO_IN_REG once, before the loop." },
+      { key: "led", color: "coral", title: "Stuck on", text: "This is what the real board did. Tick volatile to fix it." },
+      { key: "module", color: "teal", title: "Compiler, not chip", text: "Plain pointers: ‘memory doesn't change by itself.’ Registers do." },
+    ],
+    overview: `<h2>The bug the handout's code hides</h2><p>Built at ESP-IDF's default (<b>-Og</b>), K03 works. Built at <b>-O2</b>, the compiler reads the button <b>once</b> and never again: the LED stays on and ignores Boot. We reproduced this on a real board.</p><label class="toggle"><input type="checkbox" id="vol-box"> Use a <code>volatile</code> pointer for the read</label><p>Run it, hold Boot, then tick the box and run again.</p>`,
+    how: [["Without <code>volatile</code>, the compiler may keep a value it already loaded."], ["Device registers change by themselves, so every read must be a real load."], ["Assembly can't have this bug: every <code>lw</code> you write is executed."]],
+  },
+];
+
+/* ---------- state ---------- */
+let lessonIndex = 0, tab = "overview", selectedPin = null, schemOpen = true;
+const sim = { running: false, pressed: false, out3: 0, lstate: 0, bold: 1, frozen: null, lastWrite: null, vol: false, cVersion: true, pressSeen: false };
+let tried = new Set();
+try { tried = new Set(JSON.parse(localStorage.getItem("c3lab.tried") || "[]")); } catch (e) {}
+function saveTried() { try { localStorage.setItem("c3lab.tried", JSON.stringify([...tried])); } catch (e) {} }
+
+/* ---------- model dimensions (mm). Breadboard rows 1-30 run along z; the board's pins sit in rows 1-15, columns b and i ---------- */
+const PITCH = 2.54, HX = 11.43, TOP = 0.8, PCB = { W: 25.4, L: 48, T: 1.6 };
+const BB = { wid: 54.6, len: 82, h: 8.5 };
+const rowZ = (r) => (r - 15.5) * PITCH;
+const COLX = { a: -13.97, b: -11.43, c: -8.89, d: -6.35, e: -3.81, f: 3.81, g: 6.35, h: 8.89, i: 11.43, j: 13.97 };
+const RAILX = [-22.86, -20.32, 20.32, 22.86];            // + and − on each side; − is the inner column
+const railRow = (k) => 2 + k + Math.floor(k / 5);        // 25 holes in five groups of five
+const BOARD_Z = rowZ(8), Y_ALONE = 9.36, Y_BB = BB.h + 2.54 + TOP;
+/* callout anchors: b = board coordinates (origin at the PCB centre), w = bench coordinates */
+const ANCH = {
+  module: { b: [0, 3.4, -13.2] }, antenna: { b: [0, 1.75, -21.9] }, headers: { b: [-HX, 1.0, -12.7] }, usb: { b: [0, 2.5, 23.4] },
+  boot: { b: [-6.6, 3.1, 20.6] }, rgb: { b: [-3.4, 1.9, -3.2] }, io3: { b: [-HX, 1.0, -7.62] }, gnd: { b: [-HX, 1.0, -5.08] },
+  led: { w: [COLX.d, BB.h + 13.2, rowZ(25.5)] }, bread: { w: [COLX.h, BB.h + 0.2, rowZ(25)] },
+};
+
+/* ---------- three.js scene ---------- */
+const stage = $("stage");
+let renderer, scene, camera, scratchCam, controls, raycaster, pointer, picks = [], hovered = null;
+let board, bbGroup, bbMats = [], bootCap, ledMat, ledLight, ledHalo, pwrHalo, gridMesh, blobBoard, blobBB;
+let mix = 0, mixShown = -1, glow = 0, ledTarget = 0, capDown = 0, fly = null, userMoved = false, home = null, lastT = 0, firstFrame = true;
+const hasGL = !!window.THREE && !!THREE.OrbitControls;
+const VIEW_DIR = [1, 1.02, 1.04];   // from the J3 side: Micro-USB lower-left, antenna upper-right
+const darkMq = matchMedia("(prefers-color-scheme: dark)");
+const isDark = () => false;          // the page is light in every theme
+const FAT = !!(THREE && THREE.LineSegments2 && THREE.LineMaterial && THREE.LineSegmentsGeometry);
+const lineMats = [];                 // fat-line materials, which need the canvas size
+const OUTLINE_PX = 2.4;
+function inkLine(positions, color, opacity) {
+  if (FAT) {
+    const g = new THREE.LineSegmentsGeometry().setPositions(positions);
+    const m = new THREE.LineMaterial({ color, linewidth: OUTLINE_PX, transparent: opacity < 1, opacity });
+    m.resolution.set(stage.clientWidth || 1, stage.clientHeight || 1); lineMats.push(m);
+    const l = new THREE.LineSegments2(g, m); l.computeLineDistances(); l.userData.ink = true; return l;
+  }
+  const g = new THREE.BufferGeometry(); g.setAttribute("position", new THREE.Float32BufferAttribute(positions, 3));
+  return new THREE.LineSegments(g, new THREE.LineBasicMaterial({ color, transparent: true, opacity }));
+}
+
+function canvasTex(w, h, draw) {
+  const c = document.createElement("canvas"); c.width = w; c.height = h; draw(c.getContext("2d"), w, h);
+  const t = new THREE.CanvasTexture(c); t.anisotropy = 8; t.encoding = THREE.sRGBEncoding; return t;
+}
+const M = (color, roughness = 0.6, metalness = 0, extra) => new THREE.MeshStandardMaterial(Object.assign({ color, roughness, metalness }, extra));
+function mesh(geo, mat, x, y, z, parent) { const m = new THREE.Mesh(geo, mat); m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; if (parent) parent.add(m); return m; }
+function box(w, h, d, mat, x, y, z, parent) { return mesh(new THREE.BoxGeometry(w, h, d), mat, x, y, z, parent); }
+function cyl(r, h, mat, x, y, z, parent, seg = 24, r2) { return mesh(new THREE.CylinderGeometry(r2 === undefined ? r : r2, r, h, seg), mat, x, y, z, parent); }
+function edges(m, color = 0x0a0e12, opacity = 0.5, angle = 30) {
+  const pos = new THREE.EdgesGeometry(m.geometry, angle).attributes.position.array;
+  m.add(inkLine(Array.from(pos), color, Math.min(1, opacity + 0.35))); return m;
+}
+function decal(w, d, mat, x, y, z, parent) {
+  const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), mat); m.rotation.x = -Math.PI / 2; m.position.set(x, y, z); m.receiveShadow = true; parent.add(m); return m;
+}
+function rrect(w, h, r, cx = 0, cy = 0) {
+  const s = new THREE.Shape(), x = cx - w / 2, y = cy - h / 2;
+  s.moveTo(x + r, y); s.lineTo(x + w - r, y); s.quadraticCurveTo(x + w, y, x + w, y + r); s.lineTo(x + w, y + h - r); s.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+  s.lineTo(x + r, y + h); s.quadraticCurveTo(x, y + h, x, y + h - r); s.lineTo(x, y + r); s.quadraticCurveTo(x, y, x + r, y); return s;
+}
+function brushed(w, h, c1, c2, draw) {
+  return canvasTex(w, h, (g) => {
+    const gr = g.createLinearGradient(0, 0, w, h); gr.addColorStop(0, c1); gr.addColorStop(1, c2); g.fillStyle = gr; g.fillRect(0, 0, w, h);
+    let s = 7; const rnd = () => (s = (s * 16807) % 2147483647) / 2147483647;
+    for (let i = 0; i < 420; i++) { g.fillStyle = `rgba(${rnd() < 0.5 ? "255,255,255" : "40,50,60"},${(0.03 + rnd() * 0.07).toFixed(3)})`; g.fillRect(rnd() * w - 40, rnd() * h, 60 + rnd() * w * 0.6, 1); }
+    if (draw) draw(g, w, h);
+  });
+}
+function engrave(g, text, x, y) { g.fillStyle = "rgba(255,255,255,.6)"; g.fillText(text, x, y + 1.6); g.fillStyle = "rgba(36,46,54,.8)"; g.fillText(text, x, y); }
+function glowSprite(rgb, size, parent, x, y, z) {
+  const t = canvasTex(128, 128, (g) => { const r = g.createRadialGradient(64, 64, 0, 64, 64, 64); r.addColorStop(0, `rgba(${rgb},.95)`); r.addColorStop(0.3, `rgba(${rgb},.45)`); r.addColorStop(1, `rgba(${rgb},0)`); g.fillStyle = r; g.fillRect(0, 0, 128, 128); });
+  const s = new THREE.Sprite(new THREE.SpriteMaterial({ map: t, transparent: true, depthWrite: false, opacity: 0 })); s.scale.set(size, size, 1); s.position.set(x, y, z); s.userData.noFade = true; parent.add(s); return s;
+}
+function blobTex() {
+  return canvasTex(256, 256, (g) => { g.shadowColor = "rgba(8,14,20,.9)"; g.shadowBlur = 34; g.shadowOffsetX = 600; g.fillStyle = "#000"; g.fillRect(-600 + 50, 50, 156, 156); });
+}
+function gridTex(dark) {
+  const N = 2048, cell = 32, rgb = dark ? "190,214,226" : "27,36,48";
+  return canvasTex(N, N, (g) => {
+    g.strokeStyle = `rgba(${rgb},${dark ? 0.07 : 0.08})`; g.lineWidth = 1.2; g.beginPath();
+    for (let i = 0; i <= N; i += cell) { g.moveTo(i, 0); g.lineTo(i, N); g.moveTo(0, i); g.lineTo(N, i); } g.stroke();
+    g.fillStyle = `rgba(${rgb},${dark ? 0.3 : 0.3})`;
+    for (let x = 0; x <= N; x += cell) for (let y = 0; y <= N; y += cell) { g.beginPath(); g.arc(x, y, (x / cell) % 4 === 0 && (y / cell) % 4 === 0 ? 3.2 : 1.9, 0, 7); g.fill(); }
+    g.globalCompositeOperation = "destination-in";
+    const r = g.createRadialGradient(N / 2, N / 2, N * 0.12, N / 2, N / 2, N * 0.5); r.addColorStop(0, "rgba(0,0,0,1)"); r.addColorStop(1, "rgba(0,0,0,0)"); g.fillStyle = r; g.fillRect(0, 0, N, N);
+  });
+}
+function applyTheme() {
+  if (!gridMesh) return;
+  if (gridMesh.material.map) gridMesh.material.map.dispose();
+  gridMesh.material.map = gridTex(isDark()); gridMesh.material.needsUpdate = true;
+}
+
+function buildScene() {
+  renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+  renderer.setPixelRatio(Math.min(devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true; renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  stage.prepend(renderer.domElement);
+  scene = new THREE.Scene();
+  camera = new THREE.PerspectiveCamera(24, 1, 5, 2600); scratchCam = new THREE.PerspectiveCamera(24, 1, 5, 2600);
+  controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = !reduceMotion; controls.dampingFactor = 0.09; controls.minDistance = 45; controls.maxDistance = 800; controls.maxPolarAngle = 1.45;
+  controls.addEventListener("start", () => { fly = null; userMoved = true; });
+
+  // soft studio environment, so metal parts have something to reflect
+  try {
+    const pm = new THREE.PMREMGenerator(renderer);
+    const env = canvasTex(256, 128, (g, w, h) => {
+      const gr = g.createLinearGradient(0, 0, 0, h); gr.addColorStop(0, "#f4f6f7"); gr.addColorStop(0.45, "#c3ccd2"); gr.addColorStop(0.55, "#8a959d"); gr.addColorStop(1, "#3c454c"); g.fillStyle = gr; g.fillRect(0, 0, w, h);
+      g.fillStyle = "rgba(255,255,255,.9)"; g.fillRect(30, 14, 60, 22); g.fillRect(150, 20, 70, 16); g.fillStyle = "rgba(255,236,200,.5)"; g.fillRect(100, 40, 30, 12);
+    });
+    env.mapping = THREE.EquirectangularReflectionMapping;
+    scene.environment = pm.fromEquirectangular(env).texture; pm.dispose(); env.dispose();
+  } catch (e) {}
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x9aa7b0, scene.environment ? 0.38 : 0.8));
+  const sun = new THREE.DirectionalLight(0xfff6ea, 0.78); sun.position.set(-48, 110, 6); sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048); Object.assign(sun.shadow.camera, { left: -70, right: 70, top: 70, bottom: -70, near: 10, far: 300 }); sun.shadow.radius = 5; sun.shadow.bias = -0.0006; sun.shadow.normalBias = 0.25;
+  scene.add(sun);
+  const fill = new THREE.DirectionalLight(0xcfe0ff, 0.22); fill.position.set(60, 40, 70); scene.add(fill);
+
+  // bench: dotted grid, soft contact shadows, cast shadows
+  gridMesh = new THREE.Mesh(new THREE.PlaneGeometry(640, 640), new THREE.MeshBasicMaterial({ transparent: true, depthWrite: false }));
+  gridMesh.rotation.x = -Math.PI / 2; gridMesh.position.set(0, 0, -6); gridMesh.renderOrder = -3; scene.add(gridMesh); applyTheme();
+  const bt = blobTex();
+  const blob = (w, d, z) => { const m = new THREE.Mesh(new THREE.PlaneGeometry(w, d), new THREE.MeshBasicMaterial({ map: bt, transparent: true, depthWrite: false, opacity: 0 })); m.rotation.x = -Math.PI / 2; m.position.set(0, 0.03, z); m.renderOrder = -2; scene.add(m); return m; };
+  blobBoard = blob(48, 76, BOARD_Z); blobBB = blob(BB.wid * 1.5, BB.len * 1.42, 0);
+  const floor = new THREE.Mesh(new THREE.PlaneGeometry(700, 700), new THREE.ShadowMaterial({ opacity: 0.2 }));
+  floor.rotation.x = -Math.PI / 2; floor.position.y = 0.05; floor.receiveShadow = true; floor.renderOrder = -1; scene.add(floor);
+
+  buildBoard(); buildBreadboard();
+  bbGroup.traverse((o) => { if (o.material && !o.userData.noFade) (Array.isArray(o.material) ? o.material : [o.material]).forEach((m) => { if (!bbMats.includes(m)) { m.userData.base = m.opacity; m.userData.wasT = m.transparent; bbMats.push(m); } }); });
+
+  raycaster = new THREE.Raycaster(); pointer = new THREE.Vector2();
+  bindPointer();
+  mix = LESSONS[lessonIndex].led ? 1 : 0; applyMix();
+  new ResizeObserver(resize).observe(stage); resize();
+  new MutationObserver(applyTheme).observe(document.documentElement, { attributes: true, attributeFilter: ["data-theme"] });
+  if (darkMq.addEventListener) darkMq.addEventListener("change", applyTheme);
+  if (!reduceMotion && home) {   // opening move: swing in from a little further out
+    const off = home.pos.clone().sub(home.target).multiplyScalar(1.3).applyAxisAngle(new THREE.Vector3(0, 1, 0), -0.5);
+    camera.position.copy(home.target).add(off); controls.target.copy(home.target); controls.update(); flyTo(home.pos, home.target, 1500);
+  }
+  renderer.setAnimationLoop(frame);
+}
+
+/* the DevKitM-1: antenna at −z, Micro-USB at +z, J1 on −x, J3 on +x */
+function buildBoard() {
+  const { W, L, T } = PCB;
+  board = new THREE.Group(); board.position.set(0, Y_ALONE, BOARD_Z); scene.add(board);
+  const mask = M(0x0b0e11, 0.92, 0, { envMapIntensity: 0.25 }), gold = M(0xdcae4c, 0.3, 0.85), steel = M(0xc6ccd1, 0.3, 0.85), steelDk = M(0x8d969d, 0.4, 0.7);
+  const plastic = M(0x15171a, 0.75, 0, { envMapIntensity: 0.4 }), ic = M(0x1d2125, 0.75, 0, { envMapIntensity: 0.4 }), lineLt = 0x56616b;
+
+  // PCB: rounded corners, bevelled edge
+  const outline = rrect(W - 0.3, L - 0.3, 1.5);
+  const pcbGeo = new THREE.ExtrudeGeometry(outline, { depth: T - 0.3, bevelEnabled: true, bevelThickness: 0.15, bevelSize: 0.15, bevelSegments: 1, curveSegments: 8 });
+  pcbGeo.rotateX(-Math.PI / 2); pcbGeo.translate(0, -(T - 0.3) / 2, 0);
+  mesh(pcbGeo, mask, 0, 0, 0, board);
+  const rimPts = rrect(W, L, 1.6).getPoints(8), rimPos = [];
+  rimPts.forEach((p, i) => { const q = rimPts[(i + 1) % rimPts.length]; rimPos.push(p.x, TOP + 0.01, -p.y, q.x, TOP + 0.01, -q.y); });
+  board.add(inkLine(rimPos, lineLt, 0.95));
+
+  // copper and silkscreen, drawn at 32 px per mm
+  const px = 32, cw = Math.round(W * px), ch = L * px, u = (x) => (x + W / 2) * px, v = (z) => (z + L / 2) * px;
+  const MODZ = -15.4, BTNZ = 20.6, BTNX = 6.6;
+  const silk = canvasTex(cw, ch, (g) => {
+    g.lineCap = "round"; g.lineJoin = "round";
+    g.strokeStyle = "rgba(150,172,186,.12)"; g.fillStyle = "rgba(150,172,186,.2)"; g.lineWidth = 5;          // a hint of traces under the mask
+    [-1, 1].forEach((sd) => { for (let i = 0; i < 15; i++) { const z = (i - 7) * PITCH, x1 = sd * (6.9 - (i % 3) * 0.7);
+      g.beginPath(); g.moveTo(u(sd * (HX - 1)), v(z)); g.lineTo(u(x1), v(z)); g.lineTo(u(x1 - sd * 1.3), v(z - 1.3)); g.stroke(); g.beginPath(); g.arc(u(x1 - sd * 1.3), v(z - 1.3), 5, 0, 7); g.fill(); } });
+    g.fillStyle = "#c9a24a";                                                                                    // module's castellated pads
+    for (let z = -18.4; z < -7.4; z += 0.8) { g.fillRect(u(-7.15), v(z), 22, 14); g.fillRect(u(7.15) - 22, v(z), 22, 14); }
+    for (let x = -5.6; x < 5.7; x += 0.8) g.fillRect(u(x) - 7, v(-7.1) - 6, 14, 22);
+    [-1, 1].forEach((sd) => { for (let i = 0; i < 15; i++) { const z = (i - 7) * PITCH;                         // through-hole pads
+      g.fillStyle = "#d8ab4a"; g.beginPath(); if (i === 0) g.rect(u(sd * HX) - 30, v(z) - 30, 60, 60); else g.arc(u(sd * HX), v(z), 30, 0, 7); g.fill();
+      g.fillStyle = "#3a2c10"; g.beginPath(); g.arc(u(sd * HX), v(z), 15, 0, 7); g.fill(); } });
+    g.strokeStyle = "rgba(236,240,242,.8)"; g.fillStyle = "rgba(240,243,245,.95)"; g.lineWidth = 3;             // white silkscreen
+    g.font = "600 25px 'IBM Plex Mono', Consolas, monospace"; g.textBaseline = "middle";
+    for (let i = 0; i < 15; i++) { const z = (i - 7) * PITCH;
+      g.textAlign = "left"; g.fillText(J1[i], u(-9.95), v(z)); g.textAlign = "right"; g.fillText(J3[i], u(9.95), v(z)); }
+    g.textAlign = "center"; g.font = "600 24px 'IBM Plex Mono', Consolas, monospace";
+    g.fillText("J1", u(-HX), v(-20.5)); g.fillText("J3", u(HX), v(-20.5));
+    g.font = "600 21px 'IBM Plex Mono', Consolas, monospace"; g.fillText("BOOT", u(-BTNX), v(23.25)); g.fillText("RST", u(BTNX), v(23.25));
+    g.font = "600 23px 'IBM Plex Sans', system-ui, sans-serif"; g.fillText("ESP32-C3-DevKitM-1", u(0), v(15.0));
+    g.font = "500 18px 'IBM Plex Mono', monospace"; g.fillText("RGB", u(-3.4), v(-1.2)); g.fillText("5V", u(5.4), v(13.9));
+    g.strokeRect(u(-BTNX - 2.2), v(BTNZ - 2.2), 4.4 * px, 4.4 * px); g.strokeRect(u(BTNX - 2.2), v(BTNZ - 2.2), 4.4 * px, 4.4 * px);
+    g.strokeRect(u(-4.5), v(5.7), 5.8 * px, 5.8 * px); g.strokeRect(u(-0.2), v(-3.2), 7.2 * px, 7.9 * px);
+    g.beginPath(); g.arc(u(-4.9), v(5.3), 5, 0, 7); g.fill();
+    g.fillStyle = "#c9ced2";                                                                                    // QFN lands around the bridge chip
+    for (let k = 0; k < 7; k++) { const o = -1.8 + k * 0.6; g.fillRect(u(-1.6 + o) - 4, v(8.6 - 2.85), 8, 12); g.fillRect(u(-1.6 + o) - 4, v(8.6 + 2.5), 8, 12); g.fillRect(u(-1.6 - 2.85), v(8.6 + o) - 4, 12, 8); g.fillRect(u(-1.6 + 2.5), v(8.6 + o) - 4, 12, 8); }
+  });
+  decal(W, L, new THREE.MeshStandardMaterial({ map: silk, transparent: true, roughness: 0.6, polygonOffset: true, polygonOffsetFactor: -2, polygonOffsetUnits: -2 }), 0, TOP + 0.012, 0, board);
+
+  // ESP32-C3-MINI-1: its own small PCB, meandering antenna at the board's end, brushed shield
+  const modGrp = new THREE.Group(); board.add(modGrp);
+  edges(box(13.2, 0.8, 16.6, M(0x12171b, 0.9, 0, { envMapIntensity: 0.3 }), 0, TOP + 0.4, MODZ, modGrp), lineLt, 0.8);
+  const modTop = canvasTex(422, 531, (g, w, h) => {
+    g.fillStyle = "#151b1f"; g.fillRect(0, 0, w, h); g.fillStyle = "#0d1215"; g.fillRect(0, 0, w, 144);
+    g.strokeStyle = "#d2a94e"; g.lineWidth = 13; g.lineJoin = "miter"; g.lineCap = "butt"; const p = (x, z) => [x * 32, z * 32];
+    g.beginPath(); g.moveTo(...p(0.6, 4.5)); g.lineTo(...p(0.6, 0.8)); g.lineTo(...p(1.6, 0.8)); g.moveTo(...p(1.6, 4.5)); g.lineTo(...p(1.6, 0.8));
+    for (let x = 1.6; x < 11.6; x += 2.2) { g.lineTo(...p(x + 1.1, 0.8)); g.lineTo(...p(x + 1.1, 3.3)); g.lineTo(...p(x + 2.2, 3.3)); g.lineTo(...p(x + 2.2, 0.8)); }
+    g.stroke();
+    g.fillStyle = "rgba(236,240,242,.5)"; g.fillRect(0, 144, w, 2);
+  });
+  decal(13.2, 16.6, new THREE.MeshStandardMaterial({ map: modTop, roughness: 0.85, envMapIntensity: 0.4 }), 0, TOP + 0.812, MODZ, modGrp);
+  const shield = edges(box(12.0, 1.7, 11.4, steel, 0, TOP + 0.8 + 0.85, MODZ + 2.3, modGrp), 0x5c666e, 0.7);
+  const shTex = brushed(384, 365, "#dbe0e3", "#bcc3c8", (g, w, h) => {
+    g.strokeStyle = "rgba(40,50,58,.35)"; g.lineWidth = 2; g.strokeRect(10, 10, w - 20, h - 20);
+    g.textAlign = "center"; g.textBaseline = "middle"; g.font = "600 33px 'IBM Plex Mono', Consolas, monospace"; engrave(g, "ESP32-C3-MINI-1", w / 2, 132);
+    g.font = "500 22px 'IBM Plex Mono', Consolas, monospace"; engrave(g, "RISC-V · 160 MHz", w / 2, 184); engrave(g, "Wi-Fi · BLE 5", w / 2, 218);
+    g.fillStyle = "rgba(36,46,54,.55)"; g.beginPath(); g.arc(34, h - 34, 8, 0, 7); g.fill();
+  });
+  decal(12.0, 11.4, new THREE.MeshStandardMaterial({ map: shTex, roughness: 0.34, metalness: 0.7 }), 0, TOP + 2.51, MODZ + 2.3, modGrp);
+  shield.userData = { kind: "part", key: "module", name: "ESP32-C3-MINI-1 module", text: "The RISC-V chip, flash and RF parts, under a metal shield." }; picks.push(shield);
+
+  // Micro-USB: folded steel shell with an opening, tongue inside
+  const usbZ = 19.3, shell = new THREE.Shape(rrect(7.5, 2.6, 0.55).getPoints(6)); shell.holes.push(new THREE.Path(rrect(6.7, 1.8, 0.4).getPoints(6)));
+  const usb = edges(mesh(new THREE.ExtrudeGeometry(shell, { depth: 5.6, bevelEnabled: false }), steel, 0, TOP + 1.3, usbZ, board), 0x5c666e, 0.75);
+  const lip = new THREE.Shape(rrect(8.0, 3.0, 0.7).getPoints(6)); lip.holes.push(new THREE.Path(rrect(6.9, 2.0, 0.45).getPoints(6)));
+  mesh(new THREE.ExtrudeGeometry(lip, { depth: 0.3, bevelEnabled: false }), steel, 0, TOP + 1.3, usbZ + 5.5, board);
+  box(6.7, 1.8, 0.3, M(0x0c0e10, 0.8), 0, TOP + 1.3, usbZ + 0.4, board); box(5.2, 0.55, 4.2, M(0x101316, 0.7), 0, TOP + 1.1, usbZ + 2.7, board);
+  box(4.4, 0.06, 3.0, gold, 0, TOP + 1.4, usbZ + 3.2, board);
+  [-1, 1].forEach((s) => { box(0.5, 1.3, 1.5, steelDk, s * 3.95, TOP + 0.65, usbZ + 1.2, board); box(0.5, 1.3, 1.5, steelDk, s * 3.95, TOP + 0.65, usbZ + 4.2, board); });
+  usb.userData = { kind: "part", key: "usb", name: "Micro-USB", text: "Power, flashing and the serial monitor." }; picks.push(usb);
+
+  // CP2102N USB-UART bridge (QFN, pin-1 dot)
+  const cp = edges(box(5, 0.85, 5, ic, -1.6, TOP + 0.425, 8.6, board), lineLt, 0.8);
+  cp.userData = { kind: "part", key: "uart", name: "CP2102N", text: "USB-to-UART bridge: carries flashing and printf. It also toggles EN and IO9 to reset the chip." }; picks.push(cp);
+  const cpTex = canvasTex(160, 160, (g, w) => { g.fillStyle = "#1f2327"; g.fillRect(0, 0, w, w); g.fillStyle = "rgba(190,198,204,.75)"; g.beginPath(); g.arc(24, 24, 8, 0, 7); g.fill();
+    g.textAlign = "center"; g.font = "600 21px 'IBM Plex Mono', Consolas, monospace"; g.fillStyle = "rgba(190,198,204,.55)"; g.fillText("CP2102N", w / 2, 78); g.font = "500 16px 'IBM Plex Mono', monospace"; g.fillText("USB-UART", w / 2, 104); });
+  decal(5, 5, new THREE.MeshStandardMaterial({ map: cpTex, roughness: 0.75, envMapIntensity: 0.4 }), -1.6, TOP + 0.86, 8.6, board);
+
+  // 3.3 V regulator (SOT-223: three leads and a tab)
+  const ldo = edges(box(6.5, 1.6, 3.5, ic, 3.4, TOP + 0.8, 0.8, board), lineLt, 0.8);
+  ldo.userData = { kind: "part", key: "ldo", name: "3.3 V regulator", text: "Turns USB's 5 V into the 3.3 V the chip runs on." }; picks.push(ldo);
+  box(3.0, 0.3, 1.9, steel, 3.4, TOP + 0.15, -1.7, board); box(3.0, 0.9, 0.3, steel, 3.4, TOP + 0.5, -1.0, board);
+  [-2.3, 0, 2.3].forEach((dx) => { box(0.75, 0.3, 1.8, steel, 3.4 + dx, TOP + 0.15, 3.3, board); box(0.75, 0.9, 0.3, steel, 3.4 + dx, TOP + 0.5, 2.6, board); });
+
+  // RGB LED (white 2 × 2 mm body, clear lens)
+  const rgb = edges(box(2.1, 0.9, 2.1, M(0xf3f4f2, 0.35), -3.4, TOP + 0.45, -3.2, board), 0x7d868d, 0.7);
+  cyl(0.72, 0.08, M(0xe9e2c4, 0.15, 0.1), -3.4, TOP + 0.92, -3.2, board, 20);
+  rgb.userData = { kind: "part", key: "rgb", name: "RGB LED (GPIO8)", text: "An addressable LED driven by GPIO8. Not used in Lab K." }; picks.push(rgb);
+
+  // 5 V power LED: small, red, lit
+  const pwr = box(1.0, 0.5, 0.75, M(0xff4a3a, 0.3, 0, { emissive: 0xff2010, emissiveIntensity: 1.6 }), 5.4, TOP + 0.25, 12.5, board);
+  box(0.3, 0.52, 0.8, steel, 4.75, TOP + 0.25, 12.5, board); box(0.3, 0.52, 0.8, steel, 6.05, TOP + 0.25, 12.5, board);
+  pwr.userData = { kind: "part", key: "pwr", name: "5 V power LED", text: "On whenever USB power is connected." }; picks.push(pwr);
+  pwrHalo = glowSprite("255,70,48", 5.5, board, 5.4, TOP + 0.9, 12.5); pwrHalo.material.opacity = 0.85;
+
+  // two SOT-23 transistors (auto-reset) and scattered 0402 / 0603 passives
+  [[4.6, 6.6], [4.6, 9.6]].forEach(([x, z]) => { edges(box(2.9, 1.0, 1.3, ic, x, TOP + 0.5, z, board), lineLt, 0.7);
+    box(0.4, 0.2, 0.6, steel, x - 0.95, TOP + 0.1, z + 0.9, board); box(0.4, 0.2, 0.6, steel, x + 0.95, TOP + 0.1, z + 0.9, board); box(0.4, 0.2, 0.6, steel, x, TOP + 0.1, z - 0.9, board); });
+  const TAN = 0xb08a5c, BLK = 0x2b2f34, H = Math.PI / 2;
+  const pas = [[-1.5, -5.6, 0, 1, TAN], [0.5, -5.6, 0, 1, TAN], [2.5, -5.6, 0, 1, TAN], [5.4, -5.0, H, 1, BLK], [-6.0, -3.2, H, 1, TAN], [-5.8, -0.4, H, 1.6, BLK], [-0.9, 0.3, H, 1.6, TAN], [7.3, 0.8, H, 1, TAN],
+    [-5.6, 2.2, H, 1, BLK], [-3.6, 2.2, H, 1, TAN], [-1.8, 3.6, 0, 1, TAN], [-5.6, 4.4, H, 1, BLK], [-5.6, 7.4, H, 1, TAN], [-5.6, 9.6, H, 1, TAN], [2.0, 6.6, 0, 1, BLK], [2.0, 8.2, 0, 1, TAN], [2.0, 9.8, 0, 1, BLK],
+    [-2.6, 12.5, 0, 1, TAN], [-0.6, 12.5, 0, 1, BLK], [3.2, 12.5, 0, 1, BLK], [-2.4, 17.4, 0, 1.6, BLK], [2.4, 17.4, 0, 1.6, BLK], [0, 17.4, 0, 1, TAN], [-6.6, 17.3, 0, 1, TAN], [6.6, 17.3, 0, 1, BLK], [6.4, 15.0, H, 1, TAN], [-6.4, 14.4, H, 1, BLK]];
+  const unit = new THREE.BoxGeometry(1, 1, 1), bodies = new THREE.InstancedMesh(unit, M(0xffffff, 0.7), pas.length), terms = new THREE.InstancedMesh(unit, M(0xcfd4d8, 0.35, 0.7), pas.length * 2);
+  const d = new THREE.Object3D(), col = new THREE.Color();
+  pas.forEach(([x, z, rot, len, c], i) => { const wd = len * 0.5, h = len > 1 ? 0.6 : 0.45;
+    d.position.set(x, TOP + h / 2, z); d.rotation.set(0, rot, 0); d.scale.set(len * 0.58, h, wd); d.updateMatrix(); bodies.setMatrixAt(i, d.matrix); bodies.setColorAt(i, col.set(c));
+    [-1, 1].forEach((s, k) => { const o = s * len * 0.39; d.position.set(x + Math.cos(rot) * o, TOP + h / 2, z - Math.sin(rot) * o); d.scale.set(len * 0.22, h * 1.06, wd * 1.06); d.updateMatrix(); terms.setMatrixAt(i * 2 + k, d.matrix); }); });
+  bodies.castShadow = terms.castShadow = true; board.add(bodies, terms);
+
+  // tactile buttons: square base, steel plate, round cap
+  [[-BTNX, "boot"], [BTNX, "rst"]].forEach(([x, key]) => {
+    edges(box(3.6, 1.2, 3.6, M(0x30353b, 0.6), x, TOP + 0.6, BTNZ, board), lineLt, 0.7);
+    edges(box(3.6, 0.25, 3.6, steel, x, TOP + 1.325, BTNZ, board), 0x5c666e, 0.7);
+    [[-1, -1], [1, -1], [-1, 1], [1, 1]].forEach(([a, b]) => box(0.5, 0.3, 0.7, steel, x + a * 2.0, TOP + 0.15, BTNZ + b * 1.2, board));
+    const cap = edges(cyl(1.05, 0.9, M(0x121519, 0.45, 0, { envMapIntensity: 0.6 }), x, TOP + 1.45 + 0.45, BTNZ, board, 28), lineLt, 0.6, 60);
+    cap.userData = key === "boot" ? { kind: "boot", key: "boot", name: "Boot button (GPIO9)", text: "Click and hold: GPIO9 reads 0." } : { kind: "rst", key: "rst", name: "RST button", text: "Restarts the chip. Here it re-runs the program." };
+    cap.userData.baseY = cap.position.y; picks.push(cap); if (key === "boot") bootCap = cap;
+  });
+
+  // 2 × 15 male headers: black strips under the board, gold pins pointing down, solder on top
+  const pinGeo = new THREE.BoxGeometry(0.64, 10.8, 0.64), solGeo = new THREE.CylinderGeometry(0.22, 0.78, 0.5, 12);
+  const pins = new THREE.InstancedMesh(pinGeo, gold, 30), solder = new THREE.InstancedMesh(solGeo, M(0xd5dade, 0.28, 0.8), 30); let n = 0;
+  [-1, 1].forEach((side) => {
+    const x = side * HX; edges(box(2.5, 2.54, 38.1, plastic, x, -TOP - 1.27, 0, board), 0x4a535b, 0.7);
+    for (let i = 0; i < 15; i++) {
+      const z = (i - 7) * PITCH;
+      d.rotation.set(0, 0, 0); d.scale.set(1, 1, 1); d.position.set(x, TOP + 0.72 - 5.4, z); d.updateMatrix(); pins.setMatrixAt(n, d.matrix);
+      d.position.set(x, TOP + 0.25, z); d.updateMatrix(); solder.setMatrixAt(n++, d.matrix);
+      const hit = new THREE.Mesh(new THREE.CylinderGeometry(1.25, 1.25, 1.8, 8), new THREE.MeshBasicMaterial({ visible: false }));
+      hit.position.set(x, TOP + 0.6, z);
+      const header = side < 0 ? "J1" : "J3", label = side < 0 ? J1[i] : J3[i];
+      hit.userData = Object.assign({ kind: "pin" }, pinInfo(label, header, i + 1)); board.add(hit); picks.push(hit);
+    }
+  });
+  pins.castShadow = solder.castShadow = true; board.add(pins, solder);
+}
+
+/* half-size breadboard with the Lab K wiring: LED on rows 25-26, jumpers to IO3's row and the ground rail */
+function buildBreadboard() {
+  bbGroup = new THREE.Group(); scene.add(bbGroup);
+  const { wid, len, h } = BB, hw = wid / 2;
+  const prof = new THREE.Shape(); const bx = hw - 0.3, by = h - 0.3; prof.moveTo(-bx, 0.3); prof.lineTo(bx, 0.3); prof.lineTo(bx, by); prof.lineTo(2.0, by); prof.lineTo(2.0, by - 3.2); prof.lineTo(-2.0, by - 3.2); prof.lineTo(-2.0, by); prof.lineTo(-bx, by); prof.lineTo(-bx, 0.3);
+  const geo = new THREE.ExtrudeGeometry(prof, { depth: len - 0.6, bevelEnabled: true, bevelThickness: 0.3, bevelSize: 0.3, bevelSegments: 1 }); geo.translate(0, 0, -(len - 0.6) / 2);
+  const body = edges(mesh(geo, M(0xe7e2d6, 0.8, 0, { envMapIntensity: 0.35 }), 0, 0, 0, bbGroup), 0x5b5548, 0.45);
+  body.userData = { kind: "part", key: "bread", name: "Breadboard", text: "Each row of five holes is joined inside. The long rails run the full length." }; picks.push(body);
+
+  const px = 14, cw = Math.round(wid * px), ch = Math.round(len * px), u = (x) => (x + hw) * px, v = (z) => (z + len / 2) * px;
+  const top = canvasTex(cw, ch, (g) => {
+    const e = 0.6 * px; g.fillStyle = "#f2eee4"; g.fillRect(e, e, cw - 2 * e, ch - 2 * e);
+    [-17.3, 17.3].forEach((x) => { g.fillStyle = "rgba(70,60,45,.28)"; g.fillRect(u(x) - 2.5, e, 5, ch - 2 * e); g.fillStyle = "rgba(255,255,255,.8)"; g.fillRect(u(x) + 2.5, e, 1.5, ch - 2 * e); });
+    const z0 = v(rowZ(2)) - 14, z1 = v(rowZ(30)) + 14;
+    [[-24.75, "#d0453a"], [-18.75, "#2f6fc0"], [18.75, "#2f6fc0"], [24.75, "#d0453a"]].forEach(([x, c]) => { g.fillStyle = c; g.fillRect(u(x) - 3, z0, 6, z1 - z0); });
+    const hole = (x, z) => { g.fillStyle = "#d4cebf"; g.fillRect(u(x) - 10.5, v(z) - 10.5, 21, 21); g.fillStyle = "#fbf9f3"; g.fillRect(u(x) - 10.5, v(z) + 8.5, 21, 2); g.fillStyle = "#24282c"; g.fillRect(u(x) - 7.5, v(z) - 7.5, 15, 15); };
+    for (let r = 1; r <= 30; r++) Object.values(COLX).forEach((x) => hole(x, rowZ(r)));
+    for (let k = 0; k < 25; k++) RAILX.forEach((x) => hole(x, rowZ(railRow(k))));
+    const txt = (s, x, z, c, f) => { g.save(); g.translate(u(x), v(z)); g.rotate(Math.PI / 2); g.fillStyle = c; g.font = f; g.textAlign = "center"; g.textBaseline = "middle"; g.fillText(s, 0, 0); g.restore(); };
+    const fN = "600 15px 'IBM Plex Mono', Consolas, monospace", fS = "700 24px 'IBM Plex Mono', Consolas, monospace";
+    [1, 5, 10, 15, 20, 25, 30].forEach((r) => { txt(String(r), -15.75, rowZ(r), "#857c6b", fN); txt(String(r), 15.75, rowZ(r), "#857c6b", fN); });
+    Object.keys(COLX).forEach((k) => { txt(k, COLX[k], -39.3, "#857c6b", fN); txt(k, COLX[k], 39.3, "#857c6b", fN); });
+    [-39.2, 39.2].forEach((z) => { txt("+", RAILX[0], z, "#d0453a", fS); txt("−", RAILX[1], z, "#2f6fc0", fS); txt("−", RAILX[2], z, "#2f6fc0", fS); txt("+", RAILX[3], z, "#d0453a", fS); });
+    g.clearRect(u(-1.95), 0, 3.9 * px, ch);
+  });
+  decal(wid, len, new THREE.MeshStandardMaterial({ map: top, roughness: 0.8, alphaTest: 0.5, envMapIntensity: 0.35 }), 0, h + 0.02, 0, bbGroup);
+
+  // external red LED: long leg in row 25 (joined to IO3 by the teal jumper), short leg in row 26
+  const lx = COLX.d, lz = rowZ(25.5), ly = h + 7, legMat = M(0xc3c9cd, 0.3, 0.85);
+  ledMat = M(0xdf2a1e, 0.22, 0, { transparent: true, opacity: 0.9, emissive: 0xff2a1a, emissiveIntensity: 0.05 });
+  const flange = cyl(2.9, 1.0, ledMat, lx, ly + 0.5, lz, bbGroup, 32), lbody = cyl(2.5, 4.6, ledMat, lx, ly + 3.3, lz, bbGroup, 32);
+  const dome = mesh(new THREE.SphereGeometry(2.5, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), ledMat, lx, ly + 5.6, lz, bbGroup);
+  box(1.5, 2.6, 0.35, legMat, lx, ly + 2.6, lz + 0.75, bbGroup); box(0.7, 2.2, 0.35, legMat, lx, ly + 2.4, lz - 0.9, bbGroup);
+  flange.userData = lbody.userData = dome.userData = { kind: "part", key: "led", name: "External red LED", text: "Long leg (anode) to IO3, short leg (cathode, flat side) to GND." };
+  picks.push(flange, lbody, dome);
+  [rowZ(25), rowZ(26)].forEach((z) => cyl(0.26, 10.4, legMat, lx, ly - 5.0, z, bbGroup, 8));
+  ledLight = new THREE.PointLight(0xff3a26, 0, 46, 2); ledLight.position.set(lx, ly + 5, lz); bbGroup.add(ledLight);
+  ledHalo = glowSprite("255,72,50", 30, bbGroup, lx, ly + 4.2, lz); ledHalo.renderOrder = 1; [flange, lbody, dome].forEach((m) => (m.renderOrder = 2));
+
+  // jumper wires: smooth arcs, rounded plugs
+  const jumper = (x0, z0, x1, z1, color, lift, bow, info) => {
+    const wm = M(color, 0.5, 0, { envMapIntensity: 0.6 }), y = h, V = (a, b, c) => new THREE.Vector3(a, b, c);
+    [[x0, z0], [x1, z1]].forEach(([x, z]) => { cyl(0.3, 4, legMat, x, y - 1, z, bbGroup, 8); cyl(0.95, 4.4, wm, x, y + 1 + 2.2, z, bbGroup, 16); mesh(new THREE.SphereGeometry(0.95, 16, 10), wm, x, y + 5.4, z, bbGroup); });
+    const p0 = V(x0, y + 5.4, z0), p3 = V(x1, y + 5.4, z1), up = V(bow, lift, 0);
+    const tube = mesh(new THREE.TubeGeometry(new THREE.CubicBezierCurve3(p0, p0.clone().add(up), p3.clone().add(up), p3), 48, 0.6, 12), wm, 0, 0, 0, bbGroup);
+    tube.userData = Object.assign({ kind: "part" }, info); picks.push(tube);
+  };
+  jumper(COLX.a, rowZ(5), COLX.a, rowZ(25), 0x1c9a8b, 14, -8, { key: "io3", name: "Jumper: IO3 to the LED", text: "From IO3's row (J1 pin 5) to the LED's long leg in row 25." });
+  jumper(COLX.a, rowZ(6), RAILX[1], rowZ(6), 0x2a3038, 5.5, 0, { key: "gnd", name: "Jumper: GND to the rail", text: "Puts J1 pin 6 (GND) on the blue − rail." });
+  jumper(COLX.a, rowZ(26), RAILX[1], rowZ(26), 0x2a3038, 5.5, 0, { key: "gnd", name: "Jumper: LED to GND", text: "The LED's short leg returns through the − rail." });
+}
+
+/* board alone (0) ↔ plugged into the breadboard (1) */
+function applyMix() {
+  const e = mix * mix * (3 - 2 * mix);
+  board.position.y = Y_ALONE + (Y_BB - Y_ALONE) * e + Math.sin(Math.PI * e) * 5;
+  bbGroup.visible = e > 0.01; bbGroup.position.y = (1 - e) * -2.5;
+  bbMats.forEach((m) => { m.opacity = m.userData.base * e; const t = m.userData.wasT || e < 0.999; if (m.transparent !== t) { m.transparent = t; m.needsUpdate = true; } });
+  blobBoard.material.opacity = 0.34 * (1 - e); blobBB.material.opacity = 0.42 * e; mixShown = mix;
+}
+function anchorWorld(key, out, settled) {
+  const a = ANCH[key]; if (!a) return null;
+  if (a.w) return out.set(a.w[0], a.w[1], a.w[2]);
+  const y = settled ? (LESSONS[lessonIndex].led ? Y_BB : Y_ALONE) : board.position.y;
+  return out.set(a.b[0], a.b[1] + y, a.b[2] + BOARD_Z);
+}
+
+/* camera: each lesson has a framing that fits the model into the free part of the bench */
+function computeHome() {
+  const W = stage.clientWidth, H = stage.clientHeight, size = stage.dataset.size, led = LESSONS[lessonIndex].led, regsH = $("regs").offsetHeight;
+  let cx, cy, fw, fh;
+  if (size === "l") { cx = W / 2; cy = H / 2 - 22; fw = W - 2 * 188; fh = H - 150; }
+  else if (size === "m") { cx = W / 2; cy = (70 + H - regsH - 28) / 2; fw = W - 2 * 84; fh = H - regsH - 112; }
+  else { cx = (W - 44) / 2; cy = (76 + H - regsH - 28) / 2; fw = W - 72; fh = H - regsH - 116; }
+  fw = Math.max(fw, 150); fh = Math.max(fh, 150);
+  camera.setViewOffset(W, H, W / 2 - cx, H / 2 - cy, W, H); camera.updateProjectionMatrix();
+  const c = led ? [0, 9, -1.5] : [0, 5.5, BOARD_Z], s = led ? [BB.wid, 22, BB.len + 4] : [PCB.W, 12.5, PCB.L];
+  const target = new THREE.Vector3(...c), dir = new THREE.Vector3(...VIEW_DIR).normalize();
+  home = { target, cx, cy, box: [c, s], fit: [W, H, fw, fh] };
+  home.pos = target.clone().addScaledVector(dir, fitDist(dir));
+  scratchCam.position.copy(home.pos); scratchCam.lookAt(target); scratchCam.updateMatrixWorld(); scratchCam.matrixWorldInverse.copy(scratchCam.matrixWorld).invert();
+}
+function fitDist(dir) {
+  const [c, s] = home.box, [W, H, fw, fh] = home.fit, d0 = 400, p = new THREE.Vector3();
+  scratchCam.position.copy(home.target).addScaledVector(dir, d0); scratchCam.lookAt(home.target); scratchCam.updateMatrixWorld();
+  scratchCam.matrixWorldInverse.copy(scratchCam.matrixWorld).invert(); scratchCam.projectionMatrix.copy(camera.projectionMatrix);
+  let x0 = 1e9, x1 = -1e9, y0 = 1e9, y1 = -1e9;
+  for (let i = 0; i < 8; i++) { p.set(c[0] + (i & 1 ? 0.5 : -0.5) * s[0], c[1] + (i & 2 ? 0.5 : -0.5) * s[1], c[2] + (i & 4 ? 0.5 : -0.5) * s[2]).project(scratchCam);
+    x0 = Math.min(x0, p.x); x1 = Math.max(x1, p.x); y0 = Math.min(y0, p.y); y1 = Math.max(y1, p.y); }
+  return THREE.MathUtils.clamp(d0 * Math.max(((x1 - x0) / 2 * W) / fw, ((y1 - y0) / 2 * H) / fh), 80, 780);
+}
+function flyTo(pos, target, ms = 900) {
+  if (reduceMotion || !ms) { fly = null; camera.position.copy(pos); controls.target.copy(target); controls.update(); return; }
+  fly = { p0: camera.position.clone(), t0: controls.target.clone(), p1: pos.clone(), t1: target.clone(), s: performance.now(), ms };
+}
+function resetView(ms) { if (!home) return; userMoved = false; flyTo(home.pos, home.target, ms === undefined ? 800 : ms); }
+function topView() {
+  if (!home) return; userMoved = true; const up = new THREE.Vector3(0, 1, 0.0004).normalize(), d = fitDist(up);
+  scratchCam.position.copy(home.pos); scratchCam.lookAt(home.target); scratchCam.updateMatrixWorld(); scratchCam.matrixWorldInverse.copy(scratchCam.matrixWorld).invert();
+  flyTo(home.target.clone().addScaledVector(up, d), home.target, 800);
+}
+function focusOn(key) {
+  const p = anchorWorld(key, new THREE.Vector3(), true); if (!p || !home) return;
+  const off = home.pos.clone().sub(home.target).multiplyScalar(0.58); userMoved = true; flyTo(p.clone().add(off), p, 800);
+}
+function resize() {
+  const W = stage.clientWidth, H = stage.clientHeight; if (!W || !H) return;
+  stage.dataset.size = W >= 700 ? "l" : W >= 520 ? "m" : "s";
+  if (renderer) {
+    renderer.setSize(W, H, false); camera.aspect = W / H; computeHome();
+    lineMats.forEach((m) => m.resolution.set(W, H));
+    if (!userMoved) { if (fly) { fly.p1.copy(home.pos); fly.t1.copy(home.target); } else flyTo(home.pos, home.target, 0); }
+  }
+  layoutCallouts();
+}
+function orbit(angle) {
+  fly = null; userMoved = true;
+  const off = camera.position.clone().sub(controls.target); off.applyAxisAngle(new THREE.Vector3(0, 1, 0), angle);
+  camera.position.copy(controls.target).add(off); controls.update();
+}
+function zoom(f) {
+  fly = null; userMoved = true;
+  const off = camera.position.clone().sub(controls.target);
+  const d = THREE.MathUtils.clamp(off.length() * f, controls.minDistance, controls.maxDistance);
+  camera.position.copy(controls.target).add(off.setLength(d)); controls.update();
+}
+function pan(dx, dz) {
+  fly = null; userMoved = true;
+  const fwd = controls.target.clone().sub(camera.position); fwd.y = 0; fwd.normalize();
+  const right = new THREE.Vector3().crossVectors(fwd, new THREE.Vector3(0, 1, 0));
+  const step = fwd.multiplyScalar(dz).add(right.multiplyScalar(dx));
+  camera.position.add(step); controls.target.add(step); controls.update();
+}
+
+function bindPointer() {
+  const el = renderer.domElement;
+  const shown = (o) => { for (let p = o; p; p = p.parent) if (p.visible === false) return false; return true; };
+  const pickAt = (ev) => {
+    const r = el.getBoundingClientRect();
+    pointer.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+    raycaster.setFromCamera(pointer, camera);
+    const hit = raycaster.intersectObjects(picks.filter(shown), false)[0];
+    return hit ? hit.object : null;
+  };
+  el.addEventListener("pointermove", (ev) => {
+    const o = pickAt(ev); const tip = $("tip");
+    if (o !== hovered) { hovered = o; setHot(o ? (o.userData.kind === "pin" ? (o.userData.label === "IO3" && o.userData.header === "J1" ? "io3" : o.userData.header === "J1" && o.userData.n === 6 ? "gnd" : "headers") : o.userData.key) : null); }
+    if (!o) { tip.hidden = true; el.style.cursor = ""; return; }
+    el.style.cursor = "pointer";
+    const d = o.userData, r = stage.getBoundingClientRect();
+    tip.innerHTML = d.kind === "pin" ? `<b>${d.header} pin ${d.n} · ${d.label}</b><br>${d.text}` : `<b>${d.name}</b><br>${d.text}`;
+    tip.style.left = Math.min(Math.max(ev.clientX - r.left, 124), r.width - 124) + "px"; tip.style.top = Math.max(ev.clientY - r.top, 70) + "px"; tip.hidden = false;
+  });
+  el.addEventListener("pointerleave", () => { $("tip").hidden = true; hovered = null; setHot(null); });
+  el.addEventListener("pointerdown", (ev) => {
+    const o = pickAt(ev); if (!o) return;
+    const d = o.userData;
+    if (d.kind === "boot") { ev.stopImmediatePropagation(); controls.enabled = false; setBoot(true); try { el.setPointerCapture(ev.pointerId); } catch (e) {}
+      const up = () => { setBoot(false); controls.enabled = true; el.removeEventListener("pointerup", up); el.removeEventListener("pointercancel", up); };
+      el.addEventListener("pointerup", up); el.addEventListener("pointercancel", up); }
+    else if (d.kind === "rst") { if (sim.running) runProgram(true); }
+    else if (d.kind === "pin") { selectedPin = d.header + d.n; setTab("pinout"); }
+  }, true);
+}
+
+/* ---------- callouts: two tidy columns beside the model, dashed leaders to pulsing anchor dots ---------- */
+let leaderEls = [], cardBoxes = [];
+function setHot(key) {
+  [...$("callouts").children].forEach((el, i) => { const on = !!key && el.dataset.key === key; el.classList.toggle("hot", on); if (leaderEls[i]) leaderEls[i].g.classList.toggle("hot", on); });
+}
+function renderCallouts() {
+  const L = LESSONS[lessonIndex], wrap = $("callouts"); wrap.innerHTML = "";
+  L.callouts.forEach((c, i) => {
+    const d = document.createElement("div"); d.className = "callout"; d.dataset.key = c.key; d.tabIndex = 0; d.setAttribute("role", "button"); d.title = "Zoom in on this part";
+    d.style.animationDelay = (reduceMotion ? 0 : 120 + i * 70) + "ms";
+    d.innerHTML = `<h3><i style="background:var(--${c.color})"></i>${c.title}</h3><p>${c.text}</p>`;
+    d.addEventListener("mouseenter", () => setHot(c.key)); d.addEventListener("mouseleave", () => setHot(null));
+    d.addEventListener("click", () => { if (renderer) focusOn(c.key); });
+    d.addEventListener("keydown", (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); if (renderer) focusOn(c.key); } });
+    wrap.appendChild(d);
+  });
+  $("leaders").innerHTML = L.callouts.map((c) => `<g style="color:var(--${c.color})"><path d=""/><g><circle class="halo" r="7"/><circle class="dot" r="3.6"/></g></g>`).join("");
+  leaderEls = [...$("leaders").children].map((g) => ({ g, path: g.firstChild, pin: g.lastChild }));
+  layoutCallouts();
+}
+const vtmp = hasGL ? new THREE.Vector3() : null;
+function layoutCallouts() {
+  const cards = [...$("callouts").children]; cardBoxes = [];
+  if (!cards.length || stage.dataset.size === "s") return;
+  const W = stage.clientWidth, H = stage.clientHeight, L = LESSONS[lessonIndex], gap = 12, pad = 16;
+  const pts = L.callouts.map((c, i) => {
+    if (renderer && home && anchorWorld(c.key, vtmp, true)) { vtmp.project(scratchCam); return { x: (vtmp.x * 0.5 + 0.5) * W, y: (-vtmp.y * 0.5 + 0.5) * H }; }
+    return { x: i % 2 ? W : 0, y: 120 + (i >> 1) * 110 };
+  });
+  const mid = home ? home.cx : W / 2, order = pts.map((p, i) => i).sort((a, b) => pts[a].x - pts[b].x);
+  const head = $("stage-head"), regs = $("regs"), ctl = $("view-ctl"), sch = $("schem");
+  const lim = { L: [head.offsetTop + head.offsetHeight + gap, regs.offsetTop - gap], R: [ctl.offsetTop + ctl.offsetHeight + gap, (sch.hidden ? H - 4 : sch.offsetTop) - gap] };
+  const run = () => {
+    const hs = cards.map((c) => c.offsetHeight), need = (a) => a.reduce((s, i) => s + hs[i] + gap, -gap), cap = (k) => lim[k][1] - lim[k][0];
+    let nL = order.filter((i) => pts[i].x < mid).length, ok = false, seen = new Set();
+    while (!seen.has(nL)) { seen.add(nL); const ol = need(order.slice(0, nL)) > cap("L"), or = need(order.slice(nL)) > cap("R");
+      if (!ol && !or) { ok = true; break; } if (ol && !or && nL > 0) nL--; else if (or && !ol && nL < order.length) nL++; else break; }
+    [["L", order.slice(0, nL)], ["R", order.slice(nL)]].forEach(([k, col]) => {
+      col.sort((a, b) => pts[a].y - pts[b].y); const ys = []; let y = lim[k][0];
+      col.forEach((i, n) => { ys[n] = Math.max(y, pts[i].y - Math.min(hs[i] / 2, 22)); y = ys[n] + hs[i] + gap; });
+      let floor = lim[k][1];
+      for (let n = col.length - 1; n >= 0; n--) { const i = col[n]; ys[n] = Math.max(lim[k][0], Math.min(ys[n], floor - hs[i])); floor = ys[n] - gap; }
+      col.forEach((i, n) => { const el = cards[i]; el.style.top = Math.round(ys[n]) + "px"; el.style.left = k === "L" ? pad + "px" : "auto"; el.style.right = k === "R" ? pad + "px" : "auto";
+        const w = el.offsetWidth; cardBoxes[i] = { x: k === "L" ? pad : W - pad - w, y: Math.round(ys[n]), w, h: hs[i], side: k }; });
+    });
+    return ok;
+  };
+  stage.classList.remove("tight");
+  if (!run()) { stage.classList.add("tight"); run(); }
+}
+function drawLeaders() {
+  if (stage.dataset.size === "s" || !leaderEls.length) return;
+  const W = stage.clientWidth, H = stage.clientHeight, L = LESSONS[lessonIndex];
+  leaderEls.forEach((le, i) => {
+    const c = L.callouts[i], b = cardBoxes[i];
+    if (!b || !anchorWorld(c.key, vtmp)) { le.g.style.display = "none"; return; }
+    vtmp.project(camera);
+    if (vtmp.z > 1) { le.g.style.display = "none"; return; }
+    le.g.style.display = "";
+    const ax = (vtmp.x * 0.5 + 0.5) * W, ay = (-vtmp.y * 0.5 + 0.5) * H, sx = b.side === "L" ? b.x + b.w : b.x, sy = b.y + Math.min(b.h / 2, 22), ex = sx + (b.side === "L" ? 14 : -14);
+    le.path.setAttribute("d", `M${sx} ${sy}L${ex} ${sy}L${ax.toFixed(1)} ${ay.toFixed(1)}`);
+    le.pin.setAttribute("transform", `translate(${ax.toFixed(1)} ${ay.toFixed(1)})`);
+  });
+}
+
+/* ---------- simulator (memory-mapped GPIO) ---------- */
+function gpioIn() { return ((sim.pressed ? 0 : 1) << 9) | (sim.out3 << 3); }
+function store(level) {
+  sim.lastWrite = level ? { addr: 0x60004008, name: "W1TS" } : { addr: 0x6000400C, name: "W1TC" };
+  sim.out3 = level ? 1 : 0;
+}
+function step() {
+  if (!sim.running) return;
+  const L = LESSONS[lessonIndex];
+  const b = (gpioIn() >> 9) & 1;
+  if (L.mode === "follow") store(b);
+  else if (L.mode === "toggle") {
+    if (sim.bold > b) { sim.lstate ^= 1; store(sim.lstate); }
+    if (b !== sim.bold && sim.cVersion) serial(`bstate=${b} bold=${sim.bold} lstate=${sim.lstate}`, "me");
+    sim.bold = b;
+  } else if (L.mode === "frozen") {
+    if (sim.vol) store(b);
+    else { if (sim.frozen === null) sim.frozen = b; store(sim.frozen); }
+  }
+}
+function setBoot(down) {
+  sim.pressed = down; $("boot-btn").classList.toggle("down", down);
+  if (down && sim.running) { sim.pressSeen = true; markTried(); }
+  step();
+}
+function markTried() {
+  const id = LESSONS[lessonIndex].id; if (tried.has(id) || !sim.running) return;
+  if (LESSONS[lessonIndex].mode !== "hello" && !sim.pressSeen) return;
+  tried.add(id); saveTried(); renderLessons(); renderProgress();
+}
+const hex = (n) => "0x" + (n >>> 0).toString(16).toUpperCase().padStart(8, "0");
+function renderRegs() {
+  const v = gpioIn(), bits = $("bits").children;
+  for (let i = 0; i < 32; i++) { const bit = (v >>> (31 - i)) & 1, el = bits[i]; if (el.firstChild.textContent !== String(bit)) el.firstChild.textContent = bit; el.classList.toggle("one", !!bit); }
+  $("in-hex").textContent = hex(v);
+  const lw = sim.lastWrite ? `<span class="${sim.lastWrite.name.toLowerCase()}">${sim.lastWrite.name}</span> ${hex(sim.lastWrite.addr)} ← 0x00000008` : "none yet";
+  if (renderRegs.lw !== lw) { renderRegs.lw = lw; $("last-write").innerHTML = lw; }
+  $("out-state").textContent = `${sim.out3} · LED ${sim.out3 ? "on" : "off"}`;
+  ledTarget = LESSONS[lessonIndex].led && sim.out3 === 1 ? 1 : 0;
+}
+
+/* ---------- serial monitor ---------- */
+let serTimers = [];
+function serial(text, cls) {
+  const out = $("serial"), line = document.createElement("div");
+  line.textContent = text; if (cls) line.className = cls;
+  out.appendChild(line); while (out.childElementCount > 300) out.firstChild.remove();
+  out.scrollTop = out.scrollHeight;
+}
+const BOOT_LOG = [
+  ["ESP-ROM:esp32c3-eco7-20230720", "sys"], ["rst:0x1 (POWERON),boot:0xc (SPI_FAST_FLASH_BOOT)", "sys"],
+  ["I (31) boot: ESP-IDF v5.5.6 2nd stage bootloader", "i"], ["I (31) boot: chip revision: v1.1", "i"],
+  ["I (122) boot: Loaded app from partition at offset 0x10000", "i"], ["I (143) cpu_start: cpu freq: 160000000 Hz", "i"],
+  ["I (241) main_task: Started on CPU0", "i"], ["I (251) main_task: Calling app_main()", "i"],
+];
+function runProgram(fromReset) {
+  stopProgram(true);
+  const L = LESSONS[lessonIndex];
+  serial(fromReset ? "--- RST pressed: the chip restarts" : `--- idf.py -p /dev/ttyUSB0 flash monitor  (${L.file})`, "sys");
+  Object.assign(sim, { running: false, out3: 0, lstate: 0, bold: 1, frozen: null, lastWrite: null, pressSeen: false });
+  const lines = BOOT_LOG.slice();
+  const prog = { board: "Hello from the ESP32-C3", k02: "K02template", k03: "K03template", k04: "K04template", k05: sim.cVersion ? "K05template" : "K05template", volatile: "K03 built with -O2" + (sim.vol ? ", volatile" : "") }[L.id];
+  lines.push([prog, "me"]);
+  if (L.mode === "hello") lines.push(["I (252) main_task: Returned from app_main()", "i"]);
+  const delay = reduceMotion ? 0 : 55;
+  setRunState("booting");
+  lines.forEach((l, i) => serTimers.push(setTimeout(() => {
+    serial(l[0], l[1]);
+    if (i === lines.length - 1) {
+      serTimers = [];
+      sim.running = L.mode !== "hello"; setRunState(sim.running ? "running" : "stopped");
+      if (L.mode === "hello") { sim.running = true; markTried(); sim.running = false; }
+      step();
+    }
+  }, delay * (i + 1))));
+}
+function stopProgram(silent) {
+  serTimers.forEach(clearTimeout); serTimers = [];
+  const was = sim.running; sim.running = false; setRunState("stopped");
+  if (was && !silent) serial("--- monitor closed (Ctrl+])", "sys");
+}
+function setRunState(s) {
+  $("ser-state").textContent = s; $("ser-dot").classList.toggle("on", s !== "stopped");
+  const b = $("run"), running = s !== "stopped";
+  b.classList.toggle("run", !running); b.classList.toggle("stop", running);
+  b.title = running ? "Stop" : "Flash and run (simulated)"; b.setAttribute("aria-label", b.title);
+  b.innerHTML = running ? '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1.5"/></svg>' : '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 5v14l12-7z"/></svg>';
+}
+
+/* ---------- code view ---------- */
+function esc(s) { return s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+function highlight(line, lang) {
+  const ci = lang === "asm" ? line.indexOf("#") : line.indexOf("//");
+  let codePart = ci >= 0 ? line.slice(0, ci) : line, com = ci >= 0 ? line.slice(ci) : "";
+  const re = lang === "asm"
+    ? /(\b0x[0-9A-Fa-f]+\b|\b\d+\b)|^(\s*[A-Za-z_]\w*:)|\b(lui|lw|sw|srl|sll|andi|addi|add|li|mv|jal|ret|beq|bne|bge|xori)\b|\b(a[0-7]|t[0-6]|s\d+|ra|sp|x0|zero)\b/g
+    : /(\b0x[0-9A-Fa-f]+\b|\b\d+\b)|("(?:[^"\\]|\\.)*")|\b(void|int|uint32_t|while|if|else|return|volatile|const)\b|(#include)\b/g;
+  let out = "", last = 0, m;
+  while ((m = re.exec(codePart))) {
+    out += esc(codePart.slice(last, m.index));
+    const cls = lang === "asm" ? (m[1] ? "tk-n" : m[2] ? "tk-l" : m[3] ? "tk-op" : "tk-r") : (m[1] ? "tk-n" : m[2] ? "tk-s" : m[3] ? "tk-k" : "tk-c");
+    out += `<span class="${cls}">${esc(m[0])}</span>`; last = m.index + m[0].length;
+    if (m[0].length === 0) re.lastIndex++;
+  }
+  out += esc(codePart.slice(last));
+  if (com) out += `<span class="tk-c">${esc(com)}</span>`;
+  return out || " ";
+}
+function renderCode() {
+  const L = LESSONS[lessonIndex];
+  $("code-file").textContent = L.file;
+  $("code").innerHTML = L.code.split("\n").map((ln, i) => `<div class="ln"><span>${i + 1}</span><span>${highlight(ln, L.lang)}</span></div>`).join("");
+}
+
+/* ---------- side panel tabs ---------- */
+function setTab(t) {
+  tab = t;
+  ["overview", "pinout", "how", "specs"].forEach((k) => $("tab-" + k).setAttribute("aria-selected", k === t));
+  renderPanel();
+}
+let stepIdx = -1;
+function renderPanel() {
+  const L = LESSONS[lessonIndex], p = $("panel");
+  if (tab === "overview") {
+    p.innerHTML = L.overview + `<ul class="steps">${L.callouts.map((c) => `<li><i style="background:color-mix(in srgb, var(--${c.color}) 20%, transparent)">•</i><span><b>${c.title}.</b> ${c.text}</span></li>`).join("")}</ul>`;
+    const vb = $("vol-box"); if (vb) { vb.checked = sim.vol; vb.addEventListener("change", () => { sim.vol = vb.checked; if (sim.running) runProgram(); }); }
+  } else if (tab === "pinout") {
+    const rows = (hdr, list) => list.map((lab, i) => { const info = pinInfo(lab, hdr, i + 1); const id = hdr + (i + 1);
+      return `<tr data-pin="${id}" class="${info.used ? "use" : ""} ${selectedPin === id ? "sel" : ""}"><td>${i + 1}</td><td>${lab}</td><td>${info.text}</td></tr>`; }).join("");
+    p.innerHTML = `<h2>Pinout</h2><p>Pin 1 is at the <b>antenna end</b>. Teal rows are the pins Lab K uses. Click a pin on the model to find it here.</p>
+      <div style="overflow-x:auto"><table class="pin-table"><thead><tr><th>#</th><th>J1 (left)</th><th>What it does</th></tr></thead><tbody>${rows("J1", J1)}</tbody></table>
+      <table class="pin-table" style="margin-top:12px"><thead><tr><th>#</th><th>J3 (right)</th><th>What it does</th></tr></thead><tbody>${rows("J3", J3)}</tbody></table></div>`;
+    const sel = p.querySelector("tr.sel"); if (sel) sel.scrollIntoView({ block: "center" });
+    p.querySelectorAll("tr[data-pin]").forEach((tr) => tr.addEventListener("click", () => { selectedPin = tr.dataset.pin; renderPanel(); }));
+  } else if (tab === "how") {
+    let html = `<h2>How it works</h2><ul class="steps">${L.how.map((h, i) => `<li><i>${i + 1}</i><span>${h[0]}</span></li>`).join("")}</ul>`;
+    if (L.stepper) html += stepperHTML();
+    if (L.id === "volatile") html += `<p style="margin-top:10px"><b>Real objdump at -O2, no volatile:</b> one load, then a loop of stores.</p>
+<pre class="asm"><span class="lbl">42008b4a:</span> <span class="hl">lw   a5,0(a5)</span>      <span class="lbl"># GPIO_IN_REG, read once</span>
+<span class="lbl">42008b52:</span> bnez a5,…b56
+<span class="lbl">42008b54:</span> j    …b54          <span class="lbl"># pressed at start: spin</span>
+<span class="lbl">42008b62:</span> sw   a4,0(a5)      <span class="lbl"># W1TS</span>
+<span class="lbl">42008b66:</span> j    …b62          <span class="lbl"># store forever</span></pre>
+<p style="margin-top:10px"><b>With volatile:</b> the load is inside the loop.</p>
+<pre class="asm"><span class="lbl">42008b5e:</span> <span class="hl">lw   a5,0(a3)</span>
+<span class="lbl">42008b60:</span> and  a5,a5,a2
+<span class="lbl">42008b62:</span> bnez a5,…b6c
+<span class="lbl">42008b64:</span> sw   a4,0(a1)      <span class="lbl"># W1TC</span>
+<span class="lbl">42008b66:</span> <span class="hl">lw   a5,0(a3)</span>      <span class="lbl"># read again</span></pre>`;
+    p.innerHTML = html;
+    if (L.stepper) bindStepper();
+  } else {
+    const s = [["Chip", "ESP32-C3, RISC-V RV32IMC, 1 core"], ["Clock", "Up to 160 MHz"], ["SRAM", "400 KB"], ["Flash", "4 MB on the test board"],
+      ["Wi-Fi", "802.11 b/g/n, 2.4 GHz"], ["Bluetooth", "Bluetooth 5 (LE)"], ["GPIO", "GPIO0–GPIO21"], ["Logic level", "3.3 V; not 5 V tolerant"],
+      ["USB-UART", "CP2102N on Micro-USB"], ["Buttons", "Boot (GPIO9), RST (EN)"], ["On-board LED", "RGB, addressable, GPIO8"], ["GPIO base", "0x6000_4000"]];
+    p.innerHTML = `<h2>Specifications</h2><div class="specs">${s.map(([k, v]) => `<div><small>${k}</small><span>${v}</span></div>`).join("")}</div>
+      <p style="margin-top:10px">From Espressif's ESP32-C3 datasheet and DevKitM-1 user guide; the flash size was read from our board with esptool. The 3D model is simplified: component positions are approximate.</p>`;
+  }
+}
+function stepperHTML() {
+  return `<div class="stepper"><table id="stp"><tbody></tbody></table><div class="bar"><button class="btn primary" id="stp-next">Step</button><button class="btn" id="stp-reset">Restart</button><span style="font-size:12px;color:var(--muted)">Reading pin 9 (Boot) · hold Boot to change the result</span></div></div>`;
+}
+function bindStepper() { stepIdx = -1; renderStepper(); $("stp-next").onclick = () => { stepIdx = Math.min(stepIdx + 1, 4); renderStepper(); }; $("stp-reset").onclick = () => { stepIdx = -1; renderStepper(); }; }
+function renderStepper() {
+  const tb = document.querySelector("#stp tbody"); if (!tb) return;
+  const v = gpioIn(), t0 = 0x60004000, t1a = v, t1b = v >>> 9, a0 = (v >>> 9) & 1;
+  const rows = [["1 · build the GPIO base", `base = ${hex(t0)}`], ["2 · load GPIO_IN_REG", `word = ${hex(t1a)}`], ["3 · shift right by 9", `word = ${hex(t1b)}`], ["4 · keep bit 0", `a0 = ${a0}  (${a0 ? "released" : "held"})`], ["5 · return", "back to the caller, result in a0"]];
+  tb.innerHTML = rows.map((r, i) => `<tr class="${i === stepIdx ? "cur" : ""}"><td>${r[0]}</td><td style="color:${i <= stepIdx ? "var(--ink)" : "var(--muted)"}">${i <= stepIdx ? r[1] : "·"}</td></tr>`).join("");
+}
+
+/* ---------- schematic ---------- */
+function renderSchem() {
+  const led = LESSONS[lessonIndex].led, on = led && sim.out3;
+  const s = `<svg viewBox="0 0 232 ${led ? 150 : 96}" role="img" aria-label="Schematic: Boot button on GPIO9${led ? ", LED from GPIO3 to GND" : ""}">
+  <g font-family="IBM Plex Mono, monospace" font-size="10" fill="var(--ink)">
+  <rect x="10" y="12" width="74" height="${led ? 124 : 72}" rx="5" fill="var(--panel-2)" stroke="var(--line)"/>
+  <text x="47" y="28" text-anchor="middle" font-weight="600">ESP32-C3</text>
+  <text x="80" y="54" text-anchor="end">IO9</text>
+  <line x1="84" y1="51" x2="130" y2="51" stroke="var(--amber)" stroke-width="1.6"/>
+  <circle cx="134" cy="51" r="2.4" fill="var(--amber)"/><circle cx="160" cy="51" r="2.4" fill="var(--amber)"/>
+  <line x1="${sim.pressed ? 134 : 135}" y1="${sim.pressed ? 49 : 47}" x2="${sim.pressed ? 160 : 158}" y2="${sim.pressed ? 49 : 36}" stroke="var(--amber)" stroke-width="1.8"/>
+  <text x="147" y="31" text-anchor="middle" fill="var(--muted)">BOOT</text>
+  <line x1="162" y1="51" x2="196" y2="51" stroke="var(--amber)" stroke-width="1.6"/>
+  <g stroke="var(--muted)" stroke-width="1.6"><line x1="196" y1="51" x2="196" y2="62"/><line x1="186" y1="62" x2="206" y2="62"/><line x1="190" y1="66" x2="202" y2="66"/><line x1="194" y1="70" x2="198" y2="70"/></g>
+  <text x="208" y="54" fill="var(--muted)">GND</text>
+  ${led ? `<text x="80" y="108" text-anchor="end">IO3</text>
+  <line x1="84" y1="105" x2="138" y2="105" stroke="var(--teal)" stroke-width="1.6"/>
+  <path d="M138 96 L138 114 L154 105 Z" fill="${on ? "var(--coral)" : "none"}" stroke="var(--coral)" stroke-width="1.6"/>
+  <line x1="154" y1="95" x2="154" y2="115" stroke="var(--coral)" stroke-width="1.8"/>
+  ${on ? '<path d="M147 92 l6 -7 M152 95 l6 -7" stroke="var(--coral)" stroke-width="1.4"/>' : ""}
+  <line x1="154" y1="105" x2="196" y2="105" stroke="var(--muted)" stroke-width="1.6"/>
+  <g stroke="var(--muted)" stroke-width="1.6"><line x1="196" y1="105" x2="196" y2="116"/><line x1="186" y1="116" x2="206" y2="116"/><line x1="190" y1="120" x2="202" y2="120"/><line x1="194" y1="124" x2="198" y2="124"/></g>
+  <text x="146" y="132" text-anchor="middle" fill="var(--muted)">LED</text>` : ""}
+  </g></svg>`;
+  if (s !== renderSchem.last) { renderSchem.last = s; $("schem-svg").innerHTML = s; }
+}
+
+/* ---------- lessons ---------- */
+const ICONS = [
+  '<rect x="13" y="3" width="20" height="28" rx="2" fill="var(--navy)"/><rect x="17" y="6" width="12" height="9" fill="var(--teal)"/><circle cx="23" cy="25" r="2" fill="var(--amber)"/>',
+  '<circle cx="12" cy="17" r="6" fill="none" stroke="var(--amber)" stroke-width="2.4"/><circle cx="12" cy="17" r="2.5" fill="var(--amber)"/><path d="M20 17h8" stroke="var(--muted)" stroke-width="2" stroke-dasharray="2 2"/><circle cx="35" cy="14" r="5" fill="var(--coral)"/><rect x="30" y="14" width="10" height="9" fill="var(--coral)"/>',
+  '<text x="23" y="23" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="15" font-weight="600" fill="var(--teal)">*p</text>',
+  '<text x="23" y="22" text-anchor="middle" font-family="IBM Plex Mono, monospace" font-size="12" font-weight="600" fill="var(--amber)">lw</text><rect x="6" y="5" width="34" height="24" rx="4" fill="none" stroke="var(--line)" stroke-width="1.5"/>',
+  '<path d="M4 10h10v14h12V10h16" fill="none" stroke="var(--teal)" stroke-width="2.4"/><circle cx="20" cy="6" r="3" fill="var(--coral)"/>',
+  '<path d="M23 4 L41 30 H5 Z" fill="none" stroke="var(--coral)" stroke-width="2.4" stroke-linejoin="round"/><path d="M23 13v8M23 25v1" stroke="var(--coral)" stroke-width="2.4" stroke-linecap="round"/>',
+];
+function renderLessons() {
+  $("lesson-list").innerHTML = LESSONS.map((L, i) => `<button class="lesson" data-i="${i}" aria-current="${i === lessonIndex}" title="${i + 1}. ${L.title}: ${L.short}">
+    <svg viewBox="0 0 46 34" aria-hidden="true">${ICONS[i]}</svg><span class="tx"><span class="t">${i + 1}. ${L.title}</span><span class="s">${L.short}</span></span>
+    <span class="done ${tried.has(L.id) ? "yes" : ""}" title="${tried.has(L.id) ? "Tried" : "Not tried yet"}"></span></button>`).join("");
+  $("lesson-list").querySelectorAll(".lesson").forEach((b) => b.addEventListener("click", () => goLesson(+b.dataset.i)));
+}
+function renderProgress() { $("prog-text").textContent = `${tried.size} / ${LESSONS.length} tried`; $("prog-bar").style.width = (tried.size / LESSONS.length) * 100 + "%"; }
+function goLesson(i, fromHash) {
+  if (sim.running || serTimers.length) stopProgram();
+  lessonIndex = i; const L = LESSONS[i];
+  Object.assign(sim, { out3: 0, lstate: 0, bold: 1, frozen: null, lastWrite: null });
+  $("st-eyebrow").textContent = `Lesson ${i + 1} · ${L.short}`; $("st-title").textContent = L.title;
+  if (renderer) { computeHome(); userMoved = false; flyTo(home.pos, home.target, 1100); }
+  renderCode(); renderLessons(); setTab(tab === "pinout" || tab === "specs" ? tab : "overview"); renderSchem(); renderCallouts();
+  if (!fromHash && location.hash !== "#" + L.id) history.replaceState(null, "", "#" + L.id);
+  const list = $("lesson-list"), cur = list.querySelector('[aria-current="true"]');
+  if (cur && list.scrollWidth > list.clientWidth) { const l = cur.offsetLeft - list.offsetLeft; if (l < list.scrollLeft) list.scrollLeft = l - 8; else if (l + cur.offsetWidth > list.scrollLeft + list.clientWidth) list.scrollLeft = l + cur.offsetWidth - list.clientWidth + 8; }
+}
+
+/* ---------- drawers ---------- */
+function openDrawer(kind) {
+  const root = $("drawer-root");
+  ["lessons", "regs", "keys"].forEach((k) => $("nav-" + k).setAttribute("aria-pressed", k === kind));
+  $("nav-board").setAttribute("aria-pressed", "false");
+  let html = "";
+  if (kind === "lessons") html = `<h2>Lessons</h2><p>Six short lessons that follow the Lab K handout. A dot turns teal once you've run the lesson and pressed Boot.</p>` +
+    LESSONS.map((L, i) => `<button class="lesson-row" data-i="${i}"><svg viewBox="0 0 46 34" width="46" height="34">${ICONS[i]}</svg><span><b>${i + 1}. ${L.title}</b><br><span style="color:var(--muted);font-size:12.5px">${L.short}</span></span></button>`).join("");
+  if (kind === "regs") html = `<h2>GPIO register map</h2><p>The ESP32-C3's GPIO block starts at <code>0x6000_4000</code>. Addresses checked against ESP-IDF v5.5.6 <code>soc/gpio_reg.h</code>.</p>
+    <table><thead><tr><th>Register</th><th>Address</th><th>Use</th></tr></thead><tbody>
+    <tr><td class="mono">GPIO_OUT_REG</td><td class="mono">0x60004004</td><td>Output level of every pin</td></tr>
+    <tr><td class="mono" style="color:var(--teal)">GPIO_OUT_W1TS_REG</td><td class="mono">0x60004008</td><td>Write 1s: those pins go high</td></tr>
+    <tr><td class="mono" style="color:var(--coral)">GPIO_OUT_W1TC_REG</td><td class="mono">0x6000400C</td><td>Write 1s: those pins go low</td></tr>
+    <tr><td class="mono">GPIO_ENABLE_REG</td><td class="mono">0x60004020</td><td>Which pins drive outputs (gpioInit sets it)</td></tr>
+    <tr><td class="mono" style="color:var(--amber)">GPIO_IN_REG</td><td class="mono">0x6000403C</td><td>Level of every pin: bit n = GPIO n</td></tr></tbody></table>
+    <h3>In this simulator</h3><p>Only bits 9 (Boot) and 3 (LED) are modelled. Other pins show 0; on a real board some read 1.</p>`;
+  if (kind === "keys") html = `<h2>Controls</h2><table><tbody>
+    <tr><td><kbd>B</kbd> or click Boot</td><td>Hold the Boot button</td></tr><tr><td>Drag</td><td>Orbit the board</td></tr>
+    <tr><td>Right-drag, <kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></td><td>Pan</td></tr><tr><td><kbd>Q</kbd> <kbd>E</kbd></td><td>Turn left, right</td></tr>
+    <tr><td>Scroll, <kbd>+</kbd> <kbd>−</kbd></td><td>Zoom</td></tr><tr><td><kbd>T</kbd></td><td>Top view</td></tr><tr><td><kbd>R</kbd></td><td>Reset view</td></tr>
+    <tr><td><kbd>Enter</kbd> in the code</td><td>Run</td></tr><tr><td>Click a pin</td><td>Show it in Pinout</td></tr><tr><td>Click RST</td><td>Restart a running program</td></tr></tbody></table>
+    <h3>About</h3><p>Made for EECS2021 Lab K. A simplified model of Espressif's ESP32-C3-DevKitM-1: pin labels from Espressif's user guide, boot log and behaviour from a real board running ESP-IDF v5.5.6. Running code here is simulated.</p>`;
+  root.innerHTML = `<div class="drawer-back"></div><div class="drawer" role="dialog" aria-modal="true"><button class="btn close" id="dr-close">Close</button>${html}</div>`;
+  root.querySelector(".drawer-back").onclick = closeDrawer; $("dr-close").onclick = closeDrawer; $("dr-close").focus();
+  root.querySelectorAll(".lesson-row").forEach((b) => b.addEventListener("click", () => { closeDrawer(); goLesson(+b.dataset.i); }));
+}
+function closeDrawer() { $("drawer-root").innerHTML = ""; ["lessons", "regs", "keys"].forEach((k) => $("nav-" + k).setAttribute("aria-pressed", "false")); $("nav-board").setAttribute("aria-pressed", "true"); }
+
+/* ---------- frame loop ---------- */
+let lastUi = 0;
+function frame(t) {
+  const dt = Math.min(0.05, Math.max(0, (t - lastT) / 1000)); lastT = t;
+  step();
+  const want = LESSONS[lessonIndex].led ? 1 : 0;
+  if (mix !== want) { mix = reduceMotion ? want : want > mix ? Math.min(want, mix + dt * 1.5) : Math.max(want, mix - dt * 1.5); applyMix(); }
+  if (fly) {
+    const k = Math.min(1, (performance.now() - fly.s) / fly.ms), e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+    camera.position.lerpVectors(fly.p0, fly.p1, e); controls.target.lerpVectors(fly.t0, fly.t1, e); if (k >= 1) fly = null;
+  }
+  controls.update();
+  const vis = mix * mix * (3 - 2 * mix);
+  glow += (ledTarget - glow) * (reduceMotion ? 1 : Math.min(1, dt * 14));
+  ledMat.emissiveIntensity = 0.05 + glow * 2.6; ledLight.intensity = glow * 1.5 * vis; ledHalo.material.opacity = glow * 0.7 * vis;
+  capDown += ((sim.pressed ? 1 : 0) - capDown) * (reduceMotion ? 1 : Math.min(1, dt * 30)); bootCap.position.y = bootCap.userData.baseY - capDown * 0.42;
+  renderer.render(scene, camera);
+  drawLeaders();
+  if (t - lastUi > 90) { lastUi = t; renderRegs(); renderSchem(); if (tab === "how" && LESSONS[lessonIndex].stepper) renderStepper(); }
+  if (firstFrame) { firstFrame = false; finishLoading(); }
+}
+
+/* ---------- loading screen ---------- */
+function setLoad(p, msg) { const b = $("load-bar"); if (!b) return; b.style.width = p + "%"; $("load-track").setAttribute("aria-valuenow", p); if (msg) $("load-msg").textContent = msg; }
+function finishLoading() { setLoad(100, "Ready"); const l = $("loader"); if (!l) return; l.classList.add("done"); setTimeout(() => l.remove(), reduceMotion ? 0 : 500); }
+function noGL(msg) {
+  if (renderer) { try { renderer.setAnimationLoop(null); renderer.domElement.remove(); } catch (e) {} renderer = null; }
+  stage.classList.add("nogl"); $("loader").classList.add("fail"); $("load-msg").textContent = msg;
+  layoutCallouts(); setInterval(() => { step(); renderRegs(); renderSchem(); }, 100);
+}
+
+/* ---------- wiring ---------- */
+async function init() {
+  const bits = $("bits"), lab = { 31: 1, 24: 1, 16: 1, 9: 1, 8: 1, 3: 1, 0: 1, 15: 2 };
+  for (let i = 0; i < 32; i++) { const d = document.createElement("div"), b = 31 - i; d.className = "bit" + (b === 9 ? " b9" : b === 3 ? " b3" : "");
+    d.innerHTML = `<b>0</b><i${lab[b] === 2 ? ' class="alt"' : ""}>${lab[b] ? b : ""}</i>`; bits.appendChild(d); }
+  ["overview", "pinout", "how", "specs"].forEach((k) => $("tab-" + k).addEventListener("click", () => setTab(k)));
+  $("run").addEventListener("click", () => (sim.running || serTimers.length ? stopProgram() : runProgram()));
+  $("ser-clear").addEventListener("click", () => ($("serial").innerHTML = ""));
+  $("code").addEventListener("keydown", (e) => { if (e.key === "Enter") { e.preventDefault(); runProgram(); } });
+  $("copy").addEventListener("click", async () => {
+    const txt = LESSONS[lessonIndex].code;
+    try { await navigator.clipboard.writeText(txt); $("copy").title = "Copied"; }
+    catch (e) { const r = document.createRange(); r.selectNodeContents($("code")); const s = getSelection(); s.removeAllRanges(); s.addRange(r); $("copy").title = "Selected: press Ctrl+C"; }
+  });
+  const bb = $("boot-btn");
+  bb.addEventListener("pointerdown", (e) => { bb.setPointerCapture(e.pointerId); setBoot(true); });
+  ["pointerup", "pointercancel"].forEach((ev) => bb.addEventListener(ev, () => setBoot(false)));
+  bb.addEventListener("keydown", (e) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); setBoot(true); } });
+  bb.addEventListener("keyup", (e) => { if (e.key === " " || e.key === "Enter") setBoot(false); });
+  $("nav-board").onclick = closeDrawer; $("nav-lessons").onclick = () => openDrawer("lessons"); $("nav-regs").onclick = () => openDrawer("regs"); $("nav-keys").onclick = () => openDrawer("keys");
+  const toggleSchem = (v) => { schemOpen = v; $("schem").hidden = !v; $("v-schem").setAttribute("aria-pressed", v); layoutCallouts(); };
+  $("v-schem").onclick = () => toggleSchem(!schemOpen); $("schem-x").onclick = () => toggleSchem(false);
+  const gl = (fn) => () => { if (renderer) fn(); };
+  $("v-left").onclick = gl(() => orbit(0.35)); $("v-right").onclick = gl(() => orbit(-0.35)); $("v-in").onclick = gl(() => zoom(0.82)); $("v-out").onclick = gl(() => zoom(1.22));
+  $("v-reset").onclick = gl(() => resetView()); $("v-top").onclick = gl(topView);
+  addEventListener("keydown", (e) => {
+    if (e.target.closest("input, textarea, [contenteditable]") || e.ctrlKey || e.metaKey || e.altKey) return;
+    if ($("drawer-root").innerHTML && e.key === "Escape") { closeDrawer(); return; }
+    const k = e.key.toLowerCase();
+    if (k === "b" && !e.repeat) { setBoot(true); return; }
+    if (!renderer) return;
+    const map = { w: () => pan(0, 3), s: () => pan(0, -3), a: () => pan(-3, 0), d: () => pan(3, 0), q: () => orbit(0.2), e: () => orbit(-0.2), r: () => resetView(), t: topView, "+": () => zoom(0.85), "=": () => zoom(0.85), "-": () => zoom(1.18) };
+    if (map[k] && !e.target.closest("button, pre, [role=button]")) { map[k](); e.preventDefault(); }
+  });
+  addEventListener("keyup", (e) => { if (e.key.toLowerCase() === "b") setBoot(false); });
+  addEventListener("hashchange", () => { const i = LESSONS.findIndex((L) => "#" + L.id === location.hash); if (i >= 0 && i !== lessonIndex) goLesson(i, true); });
+
+  const start = LESSONS.findIndex((L) => "#" + L.id === location.hash);
+  renderProgress();
+  new ResizeObserver(resize).observe(stage);
+  goLesson(start >= 0 ? start : 0, true);
+  renderRegs();
+  if (!hasGL) { noGL("3D view unavailable: the 3D library didn't load. Everything else still works."); return; }
+  setLoad(35, "Loading fonts");
+  try {
+    await Promise.race([Promise.all(['600 20px "IBM Plex Mono"', '500 20px "IBM Plex Mono"', '600 20px "IBM Plex Sans"', '700 20px "Chakra Petch"'].map((f) => document.fonts.load(f))), new Promise((r) => setTimeout(r, 2500))]);
+  } catch (e) {}
+  setLoad(65, "Building the board");
+  await new Promise((r) => setTimeout(r, 40));
+  try { buildScene(); setLoad(90, "Placing the parts"); }
+  catch (e) { noGL("3D view unavailable on this device. Everything else still works."); }
+}
+init();
+})();
+</script>
+
+</body>
+</html>
