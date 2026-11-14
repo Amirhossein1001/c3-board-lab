@@ -522,7 +522,7 @@ let tried = new Set();
 try { tried = new Set(JSON.parse(localStorage.getItem("c3lab.tried") || "[]")); } catch (e) {}
 function saveTried() { try { localStorage.setItem("c3lab.tried", JSON.stringify([...tried])); } catch (e) {} }
 
-/* ---------- model dimensions (mm). Breadboard rows 1-30 run along z; the board's pins sit in rows 1-15, columns b and i ---------- */
+/* ---------- model dimensions (mm). Breadboard rows 1-30 run along z; the board sits in the middle, pins in rows 9-23, columns b and i ---------- */
 /* the board follows Espressif's DXF (DIMENSION_ESP32-C3-DEVKITM-1_V1): 25.40 × 38.91 mm, r = 1 mm corners, the module's
    antenna overhanging the top edge by 5.3 mm. Board origin = PCB centre; DXF (X, Y) maps to x = X − 12.7, z = 19.4565 − Y */
 const PITCH = 2.54, HX = 11.43, TOP = 0.8, PCB = { W: 25.4, L: 38.913, T: 1.6, R: 1.0 };
@@ -534,12 +534,13 @@ const rowZ = (r) => (r - 15.5) * PITCH;
 const COLX = { a: -13.97, b: -11.43, c: -8.89, d: -6.35, e: -3.81, f: 3.81, g: 6.35, h: 8.89, i: 11.43, j: 13.97 };
 const RAILX = [-22.86, -20.32, 20.32, 22.86];            // + and − on each side; − is the inner column
 const railRow = (k) => 2 + k + Math.floor(k / 5);        // 25 holes in five groups of five
-const BOARD_Z = rowZ(1) - PIN1Z, Y_ALONE = 9.36, Y_BB = BB.h + 2.54 + TOP;
+const PIN1ROW = 9, IO3ROW = PIN1ROW + 4;                 // J1 pin 5 (IO3) in row 13, pin 6 (GND) in row 14
+const BOARD_Z = rowZ(PIN1ROW) - PIN1Z, Y_ALONE = 9.36, Y_BB = BB.h + 2.54 + TOP;
 /* callout anchors: b = board coordinates (origin at the PCB centre), w = bench coordinates */
 const ANCH = {
   module: { b: [0, 3.4, -13.8] }, antenna: { b: [0, 1.75, -22.1] }, headers: { b: [-HX, 1.0, pinZ(2)] }, usb: { b: [0, 2.6, 18.6] },
   boot: { b: [-7.6, 2.5, 16.28] }, rgb: { b: [6.73, 2.0, -2.62] }, io3: { b: [-HX, 1.0, pinZ(4)] }, gnd: { b: [-HX, 1.0, pinZ(5)] },
-  led: { w: [COLX.d, BB.h + 13.2, rowZ(25.5)] }, bread: { w: [COLX.h, BB.h + 0.2, rowZ(25)] },
+  led: { w: [COLX.a, BB.h + 13.2, rowZ(IO3ROW + 0.5)] }, bread: { w: [COLX.h, BB.h + 0.2, rowZ(27)] },
 };
 
 /* ---------- three.js scene ---------- */
@@ -829,7 +830,7 @@ function buildBoard() {
   pins.castShadow = solder.castShadow = true; board.add(pins, solder);
 }
 
-/* half-size breadboard with the Lab K wiring: LED on rows 25-26, jumpers to IO3's row and the ground rail */
+/* half-size breadboard with the Lab K wiring: the board in the middle, the LED plugged into column a right beside IO3 and GND */
 function buildBreadboard() {
   bbGroup = new THREE.Group(); scene.add(bbGroup);
   const { wid, len, h } = BB, hw = wid / 2;
@@ -856,29 +857,17 @@ function buildBreadboard() {
   });
   decal(wid, len, new THREE.MeshStandardMaterial({ map: top, roughness: 0.8, alphaTest: 0.5, envMapIntensity: 0.35 }), 0, h + 0.02, 0, bbGroup);
 
-  // external red LED: long leg in row 25 (joined to IO3 by the teal jumper), short leg in row 26
-  const lx = COLX.d, lz = rowZ(25.5), ly = h + 7, legMat = M(0xc3c9cd, 0.3, 0.85);
+  // external red LED, no wires: long leg in a13 (IO3's row), short leg in a14 (GND's row)
+  const lx = COLX.a, lz = rowZ(IO3ROW + 0.5), ly = h + 7, legMat = M(0xc3c9cd, 0.3, 0.85);
   ledMat = M(0xdf2a1e, 0.22, 0, { transparent: true, opacity: 0.9, emissive: 0xff2a1a, emissiveIntensity: 0.05 });
   const flange = cyl(2.9, 1.0, ledMat, lx, ly + 0.5, lz, bbGroup, 32), lbody = cyl(2.5, 4.6, ledMat, lx, ly + 3.3, lz, bbGroup, 32);
   const dome = mesh(new THREE.SphereGeometry(2.5, 32, 16, 0, Math.PI * 2, 0, Math.PI / 2), ledMat, lx, ly + 5.6, lz, bbGroup);
   box(1.5, 2.6, 0.35, legMat, lx, ly + 2.6, lz + 0.75, bbGroup); box(0.7, 2.2, 0.35, legMat, lx, ly + 2.4, lz - 0.9, bbGroup);
-  flange.userData = lbody.userData = dome.userData = { kind: "part", key: "led", name: "External red LED", text: "Long leg (anode) to IO3, short leg (cathode, flat side) to GND." };
+  flange.userData = lbody.userData = dome.userData = { kind: "part", key: "led", name: "External red LED", text: "Plugged in right beside the board: long leg (anode) in IO3's row, short leg (cathode, flat side) in GND's row." };
   picks.push(flange, lbody, dome);
-  [rowZ(25), rowZ(26)].forEach((z) => cyl(0.26, 10.4, legMat, lx, ly - 5.0, z, bbGroup, 8));
+  [rowZ(IO3ROW), rowZ(IO3ROW + 1)].forEach((z) => cyl(0.26, 10.4, legMat, lx, ly - 5.0, z, bbGroup, 8));
   ledLight = new THREE.PointLight(0xff3a26, 0, 46, 2); ledLight.position.set(lx, ly + 5, lz); bbGroup.add(ledLight);
   ledHalo = glowSprite("255,72,50", 30, bbGroup, lx, ly + 4.2, lz); ledHalo.renderOrder = 1; [flange, lbody, dome].forEach((m) => (m.renderOrder = 2));
-
-  // jumper wires: smooth arcs, rounded plugs
-  const jumper = (x0, z0, x1, z1, color, lift, bow, info) => {
-    const wm = M(color, 0.5, 0, { envMapIntensity: 0.6 }), y = h, V = (a, b, c) => new THREE.Vector3(a, b, c);
-    [[x0, z0], [x1, z1]].forEach(([x, z]) => { cyl(0.3, 4, legMat, x, y - 1, z, bbGroup, 8); cyl(0.95, 4.4, wm, x, y + 1 + 2.2, z, bbGroup, 16); mesh(new THREE.SphereGeometry(0.95, 16, 10), wm, x, y + 5.4, z, bbGroup); });
-    const p0 = V(x0, y + 5.4, z0), p3 = V(x1, y + 5.4, z1), up = V(bow, lift, 0);
-    const tube = mesh(new THREE.TubeGeometry(new THREE.CubicBezierCurve3(p0, p0.clone().add(up), p3.clone().add(up), p3), 48, 0.6, 12), wm, 0, 0, 0, bbGroup);
-    tube.userData = Object.assign({ kind: "part" }, info); picks.push(tube);
-  };
-  jumper(COLX.a, rowZ(5), COLX.a, rowZ(25), 0x1c9a8b, 14, -8, { key: "io3", name: "Jumper: IO3 to the LED", text: "From IO3's row (J1 pin 5) to the LED's long leg in row 25." });
-  jumper(COLX.a, rowZ(6), RAILX[1], rowZ(6), 0x2a3038, 5.5, 0, { key: "gnd", name: "Jumper: GND to the rail", text: "Puts J1 pin 6 (GND) on the blue − rail." });
-  jumper(COLX.a, rowZ(26), RAILX[1], rowZ(26), 0x2a3038, 5.5, 0, { key: "gnd", name: "Jumper: LED to GND", text: "The LED's short leg returns through the − rail." });
 }
 
 /* board alone (0) ↔ plugged into the breadboard (1) */
@@ -905,7 +894,7 @@ function computeHome() {
   else { cx = (W - 44) / 2; cy = (76 + H - regsH - 28) / 2; fw = W - 72; fh = H - regsH - 116; }
   fw = Math.max(fw, 150); fh = Math.max(fh, 150);
   camera.setViewOffset(W, H, W / 2 - cx, H / 2 - cy, W, H); camera.updateProjectionMatrix();
-  const c = led ? [0, 9, -1.5] : [0, 5.5, BOARD_Z + SPANC], s = led ? [BB.wid, 22, BB.len + 4] : [PCB.W, 12.5, SPANL];
+  const c = led ? [0, 9, BOARD_Z + SPANC] : [0, 5.5, BOARD_Z + SPANC], s = led ? [BB.wid, 22, SPANL + 18] : [PCB.W, 12.5, SPANL];   // LED lessons: the board, the LED and the rows around them
   const target = new THREE.Vector3(...c), dir = new THREE.Vector3(...VIEW_DIR).normalize();
   home = { target, cx, cy, box: [c, s], fit: [W, H, fw, fh] };
   home.pos = target.clone().addScaledVector(dir, fitDist(dir));
