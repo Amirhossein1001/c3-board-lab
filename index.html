@@ -226,6 +226,19 @@ code { font-family: var(--f-mono); font-size: .92em; background: var(--panel-2);
 .drawer { position: fixed; top: 0; bottom: 0; left: 0; width: min(440px, 100%); z-index: 21; background: var(--panel); border-right: 1px solid var(--line);
   padding: max(16px, env(safe-area-inset-top, 0px)) 16px 16px max(16px, env(safe-area-inset-left, 0px)); overflow: auto; box-sizing: border-box; }
 .drawer h2 { font-family: var(--f-display); margin: 0 0 12px; font-size: 20px; }
+.fb { display: grid; gap: 14px; margin-top: 4px; }
+.fb label, .fb legend { display: block; font-weight: 600; font-size: 13px; margin-bottom: 6px; }
+.fb fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+.fb select, .fb textarea { width: 100%; box-sizing: border-box; font: inherit; color: var(--ink); background: var(--panel-2); border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px; }
+.fb textarea { min-height: 84px; resize: vertical; }
+.fb .chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.fb .chips input { position: absolute; opacity: 0; pointer-events: none; }
+.fb .chips label { margin: 0; font-weight: 500; padding: 6px 12px; border: 1px solid var(--line); border-radius: 999px; background: var(--panel-2); cursor: pointer; }
+.fb .chips input:checked + label { border-color: var(--teal); background: color-mix(in srgb, var(--teal) 14%, var(--panel)); color: var(--ink); }
+.fb .chips input:focus-visible + label { outline: 2px solid var(--teal); outline-offset: 2px; }
+.fb .acts { display: flex; flex-wrap: wrap; gap: 8px; }
+.fb .note { font-size: 12.5px; color: var(--muted); margin: 0; }
+.fb .status { font-size: 12.5px; color: var(--teal); min-height: 1.2em; margin: 0; }
 .drawer h3 { font-family: var(--f-display); font-size: 13px; letter-spacing: .1em; text-transform: uppercase; color: var(--muted); margin: 16px 0 8px; }
 .drawer .close { float: right; }
 .drawer table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
@@ -270,6 +283,7 @@ kbd { font-family: var(--f-mono); font-size: 11.5px; padding: 1px 6px; border: 1
     <button id="nav-lessons" aria-pressed="false" title="Lessons"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h6a2 2 0 0 1 2 2v13a2 2 0 0 0-2-2H4zM20 5h-6a2 2 0 0 0-2 2v13a2 2 0 0 1 2-2h6z"/></svg>Lessons</button>
     <button id="nav-regs" aria-pressed="false" title="Register map"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 9h2v6H7zM11 9h2v6h-2zM15 9h2v6h-2z"/></svg>Registers</button>
     <button id="nav-keys" aria-pressed="false" title="Controls and shortcuts"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h1M11 10h1M15 10h1M7 14h10"/></svg>Keys</button>
+    <button id="nav-feedback" aria-pressed="false" title="Send feedback"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M4 5h16v11H9l-5 4z"/><path d="M8 9h8M8 12h5"/></svg>Feedback</button>
     <div class="spacer"></div>
     <div class="credit">EECS2021 · Lab K</div>
   </nav>
@@ -1255,9 +1269,10 @@ function goLesson(i, fromHash) {
 /* ---------- drawers ---------- */
 function openDrawer(kind) {
   const root = $("drawer-root");
-  ["lessons", "regs", "keys"].forEach((k) => $("nav-" + k).setAttribute("aria-pressed", k === kind));
+  ["lessons", "regs", "keys", "feedback"].forEach((k) => $("nav-" + k).setAttribute("aria-pressed", k === kind));
   $("nav-board").setAttribute("aria-pressed", "false");
   let html = "";
+  if (kind === "feedback") html = feedbackHTML();
   if (kind === "lessons") html = `<h2>Lessons</h2><p>Six short lessons that follow the Lab K handout. A dot turns teal once you've run the lesson and pressed Boot.</p>` +
     LESSONS.map((L, i) => `<button class="lesson-row" data-i="${i}"><svg viewBox="0 0 46 34" width="46" height="34">${ICONS[i]}</svg><span><b>${i + 1}. ${L.title}</b><br><span style="color:var(--muted);font-size:12.5px">${L.short}</span></span></button>`).join("");
   if (kind === "regs") html = `<h2>GPIO register map</h2><p>The ESP32-C3's GPIO block starts at <code>0x6000_4000</code>. Addresses checked against ESP-IDF v5.5.6 <code>soc/gpio_reg.h</code>.</p>
@@ -1277,8 +1292,62 @@ function openDrawer(kind) {
   root.innerHTML = `<div class="drawer-back"></div><div class="drawer" role="dialog" aria-modal="true"><button class="btn close" id="dr-close">Close</button>${html}</div>`;
   root.querySelector(".drawer-back").onclick = closeDrawer; $("dr-close").onclick = closeDrawer; $("dr-close").focus();
   root.querySelectorAll(".lesson-row").forEach((b) => b.addEventListener("click", () => { closeDrawer(); goLesson(+b.dataset.i); }));
+  if (kind === "feedback") bindFeedback();
 }
-function closeDrawer() { $("drawer-root").innerHTML = ""; ["lessons", "regs", "keys"].forEach((k) => $("nav-" + k).setAttribute("aria-pressed", "false")); $("nav-board").setAttribute("aria-pressed", "true"); }
+function closeDrawer() { $("drawer-root").innerHTML = ""; ["lessons", "regs", "keys", "feedback"].forEach((k) => $("nav-" + k).setAttribute("aria-pressed", "false")); $("nav-board").setAttribute("aria-pressed", "true"); }
+
+/* ---------- feedback: a pre-filled GitHub issue, or text to copy into an email ---------- */
+const ISSUE_URL = "https://github.com/Amirhossein1001/c3-board-lab/issues/new";
+const FB_KEY = "c3lab.feedbackDraft";
+function feedbackHTML() {
+  const chips = (name, opts) => `<div class="chips">${opts.map((o, i) => `<input type="radio" name="${name}" id="fb-${name}-${i}" value="${o}"><label for="fb-${name}-${i}">${o}</label>`).join("")}</div>`;
+  return `<h2>Send feedback</h2><p>Tell us what helped and what didn't. Thanks for taking a minute.</p>
+  <form class="fb" id="fb-form" novalidate>
+    <fieldset><legend>I am a</legend>${chips("role", ["Student", "TA", "Instructor", "Other"])}</fieldset>
+    <fieldset><legend>How useful was it?</legend>${chips("rating", ["1", "2", "3", "4", "5"])}<p class="note" style="margin-top:6px">1 = not useful, 5 = very useful</p></fieldset>
+    <div><label for="fb-lesson">Which part is this about?</label><select id="fb-lesson"><option value="The whole page">The whole page</option>${LESSONS.map((L, i) => `<option value="Lesson ${i + 1}: ${L.title}">Lesson ${i + 1}: ${L.title}</option>`).join("")}</select></div>
+    <div><label for="fb-good">What worked well?</label><textarea id="fb-good" placeholder="For example: watching bit 9 change made MMIO click"></textarea></div>
+    <div><label for="fb-fix">What was confusing, wrong or missing?</label><textarea id="fb-fix" placeholder="For example: I couldn't find the IO3 pin"></textarea></div>
+    <div class="acts"><button class="btn primary" type="submit" id="fb-issue">Open on GitHub</button><button class="btn" type="button" id="fb-copy">Copy for email</button></div>
+    <p class="status" id="fb-status" aria-live="polite"></p>
+    <p class="note"><b>Open on GitHub</b> fills in an issue in a new tab; you need a GitHub account to post it, and it will be public. No account? Use <b>Copy for email</b> and send it to your TA.</p>
+  </form>`;
+}
+function feedbackText() {
+  const pick = (n) => { const r = document.querySelector(`input[name="${n}"]:checked`); return r ? r.value : "not given"; };
+  return `**Role:** ${pick("role")}\n**Usefulness (1-5):** ${pick("rating")}\n**About:** ${$("fb-lesson").value}\n\n**What worked well**\n${$("fb-good").value.trim() || "-"}\n\n**What was confusing, wrong or missing**\n${$("fb-fix").value.trim() || "-"}\n\n---\nScreen: ${innerWidth}x${innerHeight} · ${navigator.userAgent.match(/(Firefox|Edg|Chrome|Safari)\/[\d.]+/)?.[0] || "browser"}`;
+}
+function bindFeedback() {
+  const form = $("fb-form"), status = $("fb-status");
+  try {
+    const d = JSON.parse(localStorage.getItem(FB_KEY) || "null");
+    if (d) { ["good", "fix"].forEach((k) => ($("fb-" + k).value = d[k] || "")); if (d.lesson) $("fb-lesson").value = d.lesson;
+      ["role", "rating"].forEach((n) => { const r = d[n] && form.querySelector(`input[name="${n}"][value="${d[n]}"]`); if (r) r.checked = true; }); }
+  } catch (e) {}
+  if (!$("fb-lesson").value || $("fb-lesson").value === "The whole page") $("fb-lesson").value = `Lesson ${lessonIndex + 1}: ${LESSONS[lessonIndex].title}`;
+  const save = () => {
+    const pick = (n) => (form.querySelector(`input[name="${n}"]:checked`) || {}).value || "";
+    try { localStorage.setItem(FB_KEY, JSON.stringify({ role: pick("role"), rating: pick("rating"), lesson: $("fb-lesson").value, good: $("fb-good").value, fix: $("fb-fix").value })); } catch (e) {}
+  };
+  form.addEventListener("input", save); form.addEventListener("change", save);
+  form.addEventListener("submit", (e) => {
+    e.preventDefault();
+    if (!$("fb-good").value.trim() && !$("fb-fix").value.trim()) { status.textContent = "Write something in one of the two boxes first."; $("fb-fix").focus(); return; }
+    const title = `Feedback: ${$("fb-lesson").value}`;
+    const url = `${ISSUE_URL}?labels=feedback&title=${encodeURIComponent(title)}&body=${encodeURIComponent(feedbackText())}`;
+    const w = window.open(url, "_blank", "noopener");
+    status.textContent = w === null ? "Your browser blocked the new tab. Allow pop-ups for this page, or use Copy for email." : "GitHub opened in a new tab. Check the text there, then press Submit new issue.";
+  });
+  $("fb-copy").addEventListener("click", async () => {
+    const txt = feedbackText().replace(/\*\*/g, "");
+    try { await navigator.clipboard.writeText(txt); status.textContent = "Copied. Paste it into an email to your TA."; }
+    catch (e) {
+      let box = $("fb-out");
+      if (!box) { box = document.createElement("textarea"); box.id = "fb-out"; box.readOnly = true; box.setAttribute("aria-label", "Feedback text to copy"); status.after(box); }
+      box.value = txt; box.focus(); box.select(); status.textContent = "Couldn't copy automatically. The text is selected below: press Ctrl+C.";
+    }
+  });
+}
 
 /* ---------- frame loop ---------- */
 let lastUi = 0;
@@ -1330,14 +1399,14 @@ async function init() {
   ["pointerup", "pointercancel"].forEach((ev) => bb.addEventListener(ev, () => setBoot(false)));
   bb.addEventListener("keydown", (e) => { if ((e.key === " " || e.key === "Enter") && !e.repeat) { e.preventDefault(); setBoot(true); } });
   bb.addEventListener("keyup", (e) => { if (e.key === " " || e.key === "Enter") setBoot(false); });
-  $("nav-board").onclick = closeDrawer; $("nav-lessons").onclick = () => openDrawer("lessons"); $("nav-regs").onclick = () => openDrawer("regs"); $("nav-keys").onclick = () => openDrawer("keys");
+  $("nav-board").onclick = closeDrawer; $("nav-lessons").onclick = () => openDrawer("lessons"); $("nav-regs").onclick = () => openDrawer("regs"); $("nav-keys").onclick = () => openDrawer("keys"); $("nav-feedback").onclick = () => openDrawer("feedback");
   const toggleSchem = (v) => { schemOpen = v; $("schem").hidden = !v; $("v-schem").setAttribute("aria-pressed", v); layoutCallouts(); };
   $("v-schem").onclick = () => toggleSchem(!schemOpen); $("schem-x").onclick = () => toggleSchem(false);
   const gl = (fn) => () => { if (renderer) fn(); };
   $("v-left").onclick = gl(() => orbit(0.35)); $("v-right").onclick = gl(() => orbit(-0.35)); $("v-in").onclick = gl(() => zoom(0.82)); $("v-out").onclick = gl(() => zoom(1.22));
   $("v-reset").onclick = gl(() => resetView()); $("v-top").onclick = gl(topView);
   addEventListener("keydown", (e) => {
-    if (e.target.closest("input, textarea, [contenteditable]") || e.ctrlKey || e.metaKey || e.altKey) return;
+    if (e.target.closest("input, textarea, select, [contenteditable]") || e.ctrlKey || e.metaKey || e.altKey) return;
     if ($("drawer-root").innerHTML && e.key === "Escape") { closeDrawer(); return; }
     const k = e.key.toLowerCase();
     if (k === "b" && !e.repeat) { setBoot(true); return; }

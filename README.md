@@ -16,4 +16,4 @@ Not affiliated with or endorsed by Espressif. Made by an EECS2021 TA.
 
 ## Feedback
 
-Open an issue on this repository, or send it to your TA.
+Use the **Feedback** button on the page (left rail). It fills in a GitHub issue for you, or copies your feedback so you can email it to your TA.
